@@ -7,27 +7,27 @@ import { GalaxyUI } from './ui.js';
 
 // Configuration
 const config = {
-  starCount: 500000,
+  starCount: 750000,
   rotationSpeed: 0.1,
-  spiralTightness: 1.5,
+  spiralTightness: 1.75,
   mouseForce: 7.0,
   mouseRadius: 10.0,
   galaxyRadius: 13.0,
-  galaxyThickness: 2,
+  galaxyThickness: 3,
   armCount: 2,
-  armWidth: 2,
-  randomness: 2,
+  armWidth: 2.25,
+  randomness: 1.8,
   particleSize: 0.06,
   starBrightness: 0.3,
   denseStarColor: '#1885ff',
   sparseStarColor: '#ffb28a',
   bloomStrength: 0.2,
   bloomRadius: 0.2,
-  bloomThreshold: 0.3,
-  cloudCount: 7000,
+  bloomThreshold: 0.1,
+  cloudCount: 5000,
   cloudSize: 3,
   cloudOpacity: 0.02,
-  cloudTintColor: '#baceff'
+  cloudTintColor: '#ffdace'
 };
 
 // Scene setup
@@ -77,6 +77,67 @@ window.addEventListener('mousemove', (event) => {
   raycaster.ray.intersectPlane(intersectionPlane, mouse3D);
 });
 
+/**
+ * Creates a starry background with random colored stars distributed on a sphere
+ * @param {THREE.Scene} scene - Scene to add stars to
+ * @param {number} count - Number of background stars
+ * @returns {THREE.Points} - The star points object
+ */
+function createStarryBackground(scene, count = 5000) {
+  const starGeometry = new THREE.BufferGeometry();
+  const starPositions = new Float32Array(count * 3);
+  const starColors = new Float32Array(count * 3);
+
+  // Distribute stars randomly on a sphere
+  for (let i = 0; i < count; i++) {
+    // Spherical coordinates for uniform distribution
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    const radius = 100 + Math.random() * 100;
+
+    // Convert to Cartesian coordinates
+    starPositions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
+    starPositions[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+    starPositions[i * 3 + 2] = radius * Math.cos(phi);
+
+    // Add color variation (mostly white, some blue/orange tinted)
+    const color = 0.8 + Math.random() * 0.2;
+    const tint = Math.random();
+    if (tint < 0.1) {
+      // Blue tint
+      starColors[i * 3] = color * 0.8;
+      starColors[i * 3 + 1] = color * 0.9;
+      starColors[i * 3 + 2] = color;
+    } else if (tint < 0.2) {
+      // Orange tint
+      starColors[i * 3] = color;
+      starColors[i * 3 + 1] = color * 0.8;
+      starColors[i * 3 + 2] = color * 0.6;
+    } else {
+      // White
+      starColors[i * 3] = color;
+      starColors[i * 3 + 1] = color;
+      starColors[i * 3 + 2] = color;
+    }
+  }
+
+  starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+  starGeometry.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
+
+  const starMaterial = new THREE.PointsMaterial({
+    size: 0.3,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.8,
+    sizeAttenuation: true
+  });
+
+  const stars = new THREE.Points(starGeometry, starMaterial);
+  scene.add(stars);
+
+  return stars;
+}
+
 // Preload cloud texture
 const textureLoader = new THREE.TextureLoader();
 const cloudTexture = textureLoader.load('/cloud.png');
@@ -87,50 +148,7 @@ galaxySimulation.createGalaxySystem();
 galaxySimulation.createVolumetricClouds();
 
 // Create starry background
-const starCount = 5000;
-const starGeometry = new THREE.BufferGeometry();
-const starPositions = new Float32Array(starCount * 3);
-const starColors = new Float32Array(starCount * 3);
-
-for (let i = 0; i < starCount; i++) {
-  const theta = Math.random() * Math.PI * 2;
-  const phi = Math.acos(2 * Math.random() - 1);
-  const radius = 100 + Math.random() * 100;
-
-  starPositions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
-  starPositions[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
-  starPositions[i * 3 + 2] = radius * Math.cos(phi);
-
-  const color = 0.8 + Math.random() * 0.2;
-  const tint = Math.random();
-  if (tint < 0.1) {
-    starColors[i * 3] = color * 0.8;
-    starColors[i * 3 + 1] = color * 0.9;
-    starColors[i * 3 + 2] = color;
-  } else if (tint < 0.2) {
-    starColors[i * 3] = color;
-    starColors[i * 3 + 1] = color * 0.8;
-    starColors[i * 3 + 2] = color * 0.6;
-  } else {
-    starColors[i * 3] = color;
-    starColors[i * 3 + 1] = color;
-    starColors[i * 3 + 2] = color;
-  }
-}
-
-starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
-starGeometry.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
-
-const starMaterial = new THREE.PointsMaterial({
-  size: 0.3,
-  vertexColors: true,
-  transparent: true,
-  opacity: 0.8,
-  sizeAttenuation: true
-});
-
-const stars = new THREE.Points(starGeometry, starMaterial);
-scene.add(stars);
+createStarryBackground(scene);
 
 // Setup bloom
 function setupBloom() {

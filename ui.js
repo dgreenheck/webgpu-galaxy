@@ -74,7 +74,7 @@ export class GalaxyUI {
     cloudsFolder.addBinding(this.config, 'cloudSize', {
       min: 0.5,
       max: 10.0,
-      step: 0.1,
+      step: 0.01,
       label: 'Size'
     }).on('change', () => this.callbacks.onUniformChange('cloudSize', this.config.cloudSize));
 
@@ -122,14 +122,14 @@ export class GalaxyUI {
     galaxyFolder.addBinding(this.config, 'rotationSpeed', {
       min: 0,
       max: 2,
-      step: 0.1,
+      step: 0.01,
       label: 'Rotation Speed'
     }).on('change', () => this.callbacks.onUniformChange('rotationSpeed', this.config.rotationSpeed));
 
     galaxyFolder.addBinding(this.config, 'spiralTightness', {
       min: 0,
       max: 10,
-      step: 0.1,
+      step: 0.01,
       label: 'Spiral Tightness'
     }).on('change', () => this.callbacks.onRegenerate());
 
@@ -143,28 +143,28 @@ export class GalaxyUI {
     galaxyFolder.addBinding(this.config, 'armWidth', {
       min: 1,
       max: 5,
-      step: 0.1,
+      step: 0.01,
       label: 'Arm Width'
     }).on('change', () => this.callbacks.onRegenerate());
 
     galaxyFolder.addBinding(this.config, 'randomness', {
       min: 0,
       max: 5,
-      step: 0.1,
+      step: 0.01,
       label: 'Randomness'
     }).on('change', () => this.callbacks.onRegenerate());
 
     galaxyFolder.addBinding(this.config, 'galaxyRadius', {
       min: 5,
       max: 20,
-      step: 1,
+      step: 0.01,
       label: 'Galaxy Radius'
     }).on('change', () => this.callbacks.onRegenerate());
 
     galaxyFolder.addBinding(this.config, 'galaxyThickness', {
       min: 0.1,
       max: 10,
-      step: 0.1,
+      step: 0.01,
       label: 'Thickness'
     }).on('change', () => this.callbacks.onRegenerate());
   }
@@ -175,14 +175,14 @@ export class GalaxyUI {
     mouseFolder.addBinding(this.config, 'mouseForce', {
       min: 0,
       max: 10,
-      step: 0.5,
+      step: 0.01,
       label: 'Force'
     }).on('change', () => this.callbacks.onUniformChange('mouseForce', this.config.mouseForce));
 
     mouseFolder.addBinding(this.config, 'mouseRadius', {
       min: 1,
       max: 15,
-      step: 0.5,
+      step: 0.01,
       label: 'Radius'
     }).on('change', () => this.callbacks.onUniformChange('mouseRadius', this.config.mouseRadius));
   }
