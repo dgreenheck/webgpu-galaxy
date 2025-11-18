@@ -140,7 +140,7 @@ function createStarryBackground(scene, count = 5000) {
 
 // Preload cloud texture
 const textureLoader = new THREE.TextureLoader();
-const cloudTexture = textureLoader.load('/cloud.png');
+const cloudTexture = textureLoader.load('cloud.png');
 
 // Create galaxy simulation with preloaded texture
 const galaxySimulation = new GalaxySimulation(scene, config, cloudTexture);
