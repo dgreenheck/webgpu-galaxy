@@ -145,7 +145,7 @@ const cloudTexture = textureLoader.load('/cloud.png');
 // Create galaxy simulation with preloaded texture
 const galaxySimulation = new GalaxySimulation(scene, config, cloudTexture);
 galaxySimulation.createGalaxySystem();
-galaxySimulation.createVolumetricClouds();
+galaxySimulation.createClouds();
 
 // Create starry background
 createStarryBackground(scene);
@@ -180,17 +180,17 @@ const ui = new GalaxyUI(config, {
 
   onCloudCountChange: (newCount) => {
     galaxySimulation.updateUniforms({ cloudCount: newCount });
-    galaxySimulation.createVolumetricClouds();
+    galaxySimulation.createClouds();
   },
 
   onCloudTintChange: (color) => {
     galaxySimulation.updateUniforms({ cloudTintColor: color });
-    galaxySimulation.createVolumetricClouds();
+    galaxySimulation.createClouds();
   },
 
   onRegenerate: () => {
     galaxySimulation.updateUniforms(config);
-    galaxySimulation.createVolumetricClouds();
+    galaxySimulation.createClouds();
     galaxySimulation.regenerate();
   }
 });
