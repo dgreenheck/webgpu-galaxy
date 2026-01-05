@@ -1,10 +1,10 @@
 import { Pane } from 'tweakpane';
 
-export class GalaxyUI {
+export class BlackHoleUI {
   constructor(config, callbacks) {
     this.config = config;
     this.callbacks = callbacks;
-    this.pane = new Pane({ title: '🌌 Galaxy Controls' });
+    this.pane = new Pane({ title: 'Black Hole Controls' });
     this.bloomPassNode = null;
     this.perfParams = { fps: 60 };
 
@@ -13,82 +13,72 @@ export class GalaxyUI {
 
   setupUI() {
     this.setupPerformanceFolder();
-    this.setupAppearanceFolder();
-    this.setupCloudsFolder();
+    this.setupBlackHoleFolder();
+    this.setupAccretionDiskFolder();
+    this.setupEffectsFolder();
     this.setupBloomFolder();
-    this.setupGalaxyFolder();
-    this.setupMouseFolder();
   }
 
   setupPerformanceFolder() {
     const perfFolder = this.pane.addFolder({ title: 'Performance' });
     perfFolder.addBinding(this.perfParams, 'fps', { readonly: true, label: 'FPS' });
-
-    // Star count control
-    perfFolder.addBinding(this.config, 'starCount', {
-      min: 1000,
-      max: 1000000,
-      step: 1000,
-      label: 'Star Count'
-    }).on('change', () => this.callbacks.onStarCountChange(this.config.starCount));
   }
 
-  setupAppearanceFolder() {
-    const appearanceFolder = this.pane.addFolder({ title: 'Appearance' });
+  setupBlackHoleFolder() {
+    const bhFolder = this.pane.addFolder({ title: 'Black Hole' });
 
-    appearanceFolder.addBinding(this.config, 'particleSize', {
-      min: 0.05,
-      max: 0.5,
-      step: 0.01,
-      label: 'Star Size'
-    }).on('change', () => this.callbacks.onUniformChange('particleSize', this.config.particleSize));
+    bhFolder.addBinding(this.config, 'blackHoleMass', {
+      min: 0.5,
+      max: 3.0,
+      step: 0.1,
+      label: 'Mass'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('blackHoleMass', this.config.blackHoleMass);
+      this.callbacks.onRegenerate();
+    });
+  }
 
-    appearanceFolder.addBinding(this.config, 'starBrightness', {
+  setupAccretionDiskFolder() {
+    const diskFolder = this.pane.addFolder({ title: 'Accretion Disk' });
+
+    diskFolder.addBinding(this.config, 'diskInnerRadius', {
+      min: 1.5,
+      max: 5.0,
+      step: 0.1,
+      label: 'Inner Radius'
+    }).on('change', () => this.callbacks.onUniformChange('diskInnerRadius', this.config.diskInnerRadius));
+
+    diskFolder.addBinding(this.config, 'diskOuterRadius', {
+      min: 5.0,
+      max: 20.0,
+      step: 0.5,
+      label: 'Outer Radius'
+    }).on('change', () => this.callbacks.onUniformChange('diskOuterRadius', this.config.diskOuterRadius));
+
+    diskFolder.addBinding(this.config, 'diskTemperature', {
+      min: 0.5,
+      max: 3.0,
+      step: 0.1,
+      label: 'Temperature'
+    }).on('change', () => this.callbacks.onUniformChange('diskTemperature', this.config.diskTemperature));
+
+    diskFolder.addBinding(this.config, 'diskBrightness', {
+      min: 0.5,
+      max: 5.0,
+      step: 0.1,
+      label: 'Brightness'
+    }).on('change', () => this.callbacks.onUniformChange('diskBrightness', this.config.diskBrightness));
+  }
+
+  setupEffectsFolder() {
+    const effectsFolder = this.pane.addFolder({ title: 'Relativistic Effects' });
+
+    effectsFolder.addBinding(this.config, 'dopplerStrength', {
       min: 0.0,
       max: 2.0,
-      step: 0.01,
-      label: 'Star Brightness'
-    }).on('change', () => this.callbacks.onUniformChange('starBrightness', this.config.starBrightness));
-
-    appearanceFolder.addBinding(this.config, 'denseStarColor', {
-      label: 'Dense Color',
-      view: 'color'
-    }).on('change', () => this.callbacks.onUniformChange('denseStarColor', this.config.denseStarColor));
-
-    appearanceFolder.addBinding(this.config, 'sparseStarColor', {
-      label: 'Sparse Color',
-      view: 'color'
-    }).on('change', () => this.callbacks.onUniformChange('sparseStarColor', this.config.sparseStarColor));
-  }
-
-  setupCloudsFolder() {
-    const cloudsFolder = this.pane.addFolder({ title: 'Clouds' });
-
-    cloudsFolder.addBinding(this.config, 'cloudCount', {
-      min: 0,
-      max: 100000,
-      step: 1000,
-      label: 'Count'
-    }).on('change', () => this.callbacks.onCloudCountChange(this.config.cloudCount));
-
-    cloudsFolder.addBinding(this.config, 'cloudSize', {
-      min: 0.5,
-      max: 10.0,
-      step: 0.01,
-      label: 'Size'
-    }).on('change', () => this.callbacks.onUniformChange('cloudSize', this.config.cloudSize));
-
-    cloudsFolder.addBinding(this.config, 'cloudOpacity', {
-      min: 0.0,
-      max: 1.0,
-      step: 0.01,
-      label: 'Opacity'
-    }).on('change', () => this.callbacks.onUniformChange('cloudOpacity', this.config.cloudOpacity));
-
-    cloudsFolder.addBinding(this.config, 'cloudTintColor', {
-      label: 'Tint Color',
-      view: 'color'
-    }).on('change', () => this.callbacks.onCloudTintChange(this.config.cloudTintColor));
+      step: 0.1,
+      label: 'Doppler Beaming'
+    }).on('change', () => this.callbacks.onUniformChange('dopplerStrength', this.config.dopplerStrength));
   }
 
   setupBloomFolder() {
@@ -114,77 +104,6 @@ export class GalaxyUI {
       step: 0.01,
       label: 'Threshold'
     }).on('change', () => this.callbacks.onBloomChange('threshold', this.config.bloomThreshold));
-  }
-
-  setupGalaxyFolder() {
-    const galaxyFolder = this.pane.addFolder({ title: 'Galaxy Structure' });
-
-    galaxyFolder.addBinding(this.config, 'rotationSpeed', {
-      min: 0,
-      max: 2,
-      step: 0.01,
-      label: 'Rotation Speed'
-    }).on('change', () => this.callbacks.onUniformChange('rotationSpeed', this.config.rotationSpeed));
-
-    galaxyFolder.addBinding(this.config, 'spiralTightness', {
-      min: 0,
-      max: 10,
-      step: 0.01,
-      label: 'Spiral Tightness'
-    }).on('change', () => this.callbacks.onRegenerate());
-
-    galaxyFolder.addBinding(this.config, 'armCount', {
-      min: 1,
-      max: 4,
-      step: 1,
-      label: 'Arm Count'
-    }).on('change', () => this.callbacks.onRegenerate());
-
-    galaxyFolder.addBinding(this.config, 'armWidth', {
-      min: 1,
-      max: 5,
-      step: 0.01,
-      label: 'Arm Width'
-    }).on('change', () => this.callbacks.onRegenerate());
-
-    galaxyFolder.addBinding(this.config, 'randomness', {
-      min: 0,
-      max: 5,
-      step: 0.01,
-      label: 'Randomness'
-    }).on('change', () => this.callbacks.onRegenerate());
-
-    galaxyFolder.addBinding(this.config, 'galaxyRadius', {
-      min: 5,
-      max: 20,
-      step: 0.01,
-      label: 'Galaxy Radius'
-    }).on('change', () => this.callbacks.onRegenerate());
-
-    galaxyFolder.addBinding(this.config, 'galaxyThickness', {
-      min: 0.1,
-      max: 10,
-      step: 0.01,
-      label: 'Thickness'
-    }).on('change', () => this.callbacks.onRegenerate());
-  }
-
-  setupMouseFolder() {
-    const mouseFolder = this.pane.addFolder({ title: 'Mouse Interaction' });
-
-    mouseFolder.addBinding(this.config, 'mouseForce', {
-      min: 0,
-      max: 10,
-      step: 0.01,
-      label: 'Force'
-    }).on('change', () => this.callbacks.onUniformChange('mouseForce', this.config.mouseForce));
-
-    mouseFolder.addBinding(this.config, 'mouseRadius', {
-      min: 1,
-      max: 15,
-      step: 0.01,
-      label: 'Radius'
-    }).on('change', () => this.callbacks.onUniformChange('mouseRadius', this.config.mouseRadius));
   }
 
   updateFPS(fps) {
