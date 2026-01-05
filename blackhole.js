@@ -36,7 +36,6 @@ import {
   sqrt,
   abs,
   pow,
-  exp,
   fract,
   clamp,
   smoothstep,
@@ -207,6 +206,46 @@ export class BlackHoleSimulation {
     });
 
     /**
+     * 1D hash function for noise
+     */
+    const hash11 = Fn(([p]) => {
+      const n = fract(sin(p.mul(127.1)).mul(43758.5453));
+      return n;
+    });
+
+    /**
+     * 1D value noise for radial band variation
+     */
+    const noise1D = Fn(([p]) => {
+      const i = floor(p);
+      const f = fract(p);
+      // Smooth interpolation
+      const u = f.mul(f).mul(float(3.0).sub(f.mul(2.0)));
+      return mix(hash11(i), hash11(i.add(1.0)), u);
+    });
+
+    /**
+     * Multi-octave 1D noise for irregular band patterns
+     * Creates varying line widths - some thin, some thick
+     */
+    const irregularBands = Fn(([r, scale]) => {
+      const value = float(0.0).toVar();
+      const amplitude = float(1.0).toVar();
+      const frequency = float(1.0).toVar();
+      const pos = r.mul(scale).toVar();
+
+      // Multiple octaves with different frequencies for varied line widths
+      // High frequency = fine lines, low frequency = thick bands
+      Loop(6, () => {
+        value.addAssign(noise1D(pos.mul(frequency)).mul(amplitude));
+        frequency.mulAssign(2.17); // Non-integer for less repetition
+        amplitude.mulAssign(0.5);
+      });
+
+      return value;
+    });
+
+    /**
      * 3D Value noise for turbulence effects.
      */
     const noise3D = Fn(([p]) => {
@@ -335,7 +374,7 @@ export class BlackHoleSimulation {
 
     /**
      * Calculate the color and intensity of the accretion disk at a given point.
-     * Implements temperature-based coloring with ring structure and turbulence.
+     * Implements temperature-based coloring with irregular radial bands.
      */
     const accretionDiskColor = Fn(([hitR, hitAngle, time]) => {
       const innerR = uniforms.diskInnerRadius;
@@ -344,34 +383,43 @@ export class BlackHoleSimulation {
       // Normalized radius (0 at inner edge, 1 at outer edge)
       const normR = clamp(hitR.sub(innerR).div(outerR.sub(innerR)), float(0.0), float(1.0));
 
-      // === RING STRUCTURE ===
-      // Multiple ring frequencies create detailed banding
-      const ringFreq = uniforms.diskRingCount;
-      const ring1 = sin(hitR.mul(ringFreq).mul(0.8)).mul(0.5).add(0.5);
-      const ring2 = sin(hitR.mul(ringFreq).mul(2.0).add(time.mul(0.5))).mul(0.3).add(0.7);
-      const ring3 = sin(hitR.mul(ringFreq).mul(5.0).sub(time.mul(0.3))).mul(0.2).add(0.8);
-      const ringPattern = ring1.mul(ring2).mul(ring3);
+      // === IRREGULAR RADIAL BANDS ===
+      // Use multi-octave 1D noise for natural-looking irregular bands
+      // The bands should vary in width - some thin lines, some thick bands
+      const bandScale = uniforms.diskRingCount.mul(3.0);
+
+      // Multiple layers of noise at different scales for band variation
+      const bands1 = irregularBands(hitR, bandScale);
+      const bands2 = irregularBands(hitR.add(17.3), bandScale.mul(1.7));
+      const bands3 = irregularBands(hitR.add(31.7), bandScale.mul(0.5));
+
+      // Create sharp transitions for distinct band edges
+      // Use pow to sharpen the bands and create more defined lines
+      const sharpBands = pow(bands1.mul(0.5).add(0.5), float(2.0));
+
+      // Combine bands with variation in intensity
+      const bandIntensity = sharpBands.mul(bands2.mul(0.3).add(0.7)).mul(bands3.mul(0.4).add(0.6));
+
+      // Add some extra fine detail bands
+      const fineDetail = noise1D(hitR.mul(bandScale).mul(8.0)).mul(0.15).add(0.85);
+
+      // Final ring pattern combines all band layers
+      const ringPattern = bandIntensity.mul(fineDetail);
 
       // === TURBULENCE ===
-      // Swirling patterns using noise
+      // Swirling patterns using noise (reduced to keep bands prominent)
       const turbCoord = vec3(
         cos(hitAngle).mul(hitR.mul(0.3)),
         sin(hitAngle).mul(hitR.mul(0.3)),
         time.mul(0.1)
       );
-      const turb = fbm(turbCoord).mul(uniforms.diskTurbulence);
-
-      // === SPIRAL DENSITY WAVES ===
-      const spiralArms = float(2.0);
-      const spiralTightness = float(0.3);
-      const spiralPhase = hitAngle.add(normR.mul(spiralTightness).mul(6.28318));
-      const spiral = sin(spiralPhase.mul(spiralArms)).mul(0.5).add(0.5);
+      const turb = fbm(turbCoord).mul(uniforms.diskTurbulence).mul(0.5);
 
       // === TEMPERATURE PROFILE ===
       // Shakura-Sunyaev thin disk: T ~ r^(-3/4)
       // Hotter near the black hole, cooler at edges
       const baseTemp = pow(normR.add(0.05), float(-0.75)).mul(uniforms.diskTemperature);
-      const tempVariation = ringPattern.mul(0.2).add(turb.mul(0.15));
+      const tempVariation = ringPattern.mul(0.2).add(turb.mul(0.1));
       const finalTemp = clamp(baseTemp.mul(float(0.8).add(tempVariation)), float(0.3), float(4.0));
 
       // === COLOR FROM TEMPERATURE ===
@@ -380,9 +428,7 @@ export class BlackHoleSimulation {
       const baseColor = mix(uniforms.diskOuterColor, uniforms.diskInnerColor, colorMix);
 
       // === INTENSITY MODULATION ===
-      const intensity = ringPattern
-        .mul(float(0.7).add(spiral.mul(0.3)))
-        .mul(float(0.85).add(turb.mul(0.3)));
+      const intensity = ringPattern.mul(float(0.9).add(turb.mul(0.2)));
 
       // Edge falloff - disk fades at boundaries
       const edgeFalloff = smoothstep(float(0.0), float(0.1), normR)
@@ -399,13 +445,6 @@ export class BlackHoleSimulation {
       // === SCHWARZSCHILD PARAMETERS ===
       // rs = 2GM/c^2 (in geometric units where G=c=1, rs = 2M)
       const rs = uniforms.blackHoleMass.mul(2.0);
-
-      // Photon sphere radius (where light can orbit)
-      const photonSphere = rs.mul(1.5);
-
-      // Critical impact parameter - rays closer than this fall in
-      // b_crit = rs * sqrt(27) / 2 ≈ 2.598 * rs
-      const criticalB = rs.mul(2.598);
 
       // === CAMERA SETUP ===
       const uv = screenUV.sub(0.5).mul(2.0);
@@ -556,17 +595,6 @@ export class BlackHoleSimulation {
         // Blend background with accumulated disk color
         color.addAssign(bgColor.mul(float(1.0).sub(alpha)));
       });
-
-      // === PHOTON RING ===
-      // Bright ring at the critical impact parameter
-      // Calculate impact parameter for this ray
-      const impactParam = length(cross(camPos, rayDir)).div(length(rayDir));
-      const ringDist = abs(impactParam.sub(criticalB));
-      const ringIntensity = exp(ringDist.div(float(0.2)).negate())
-        .mul(uniforms.photonRingIntensity)
-        .mul(float(1.0).sub(captured));
-
-      color.addAssign(vec3(1.0, 0.95, 0.8).mul(ringIntensity).mul(0.5));
 
       // === TONE MAPPING (ACES Filmic) ===
       const a = float(2.51);
