@@ -1,369 +1,574 @@
 /**
- * Black Hole Simulation with Ray-Traced Gravitational Lensing
+ * ============================================================================
+ * BLACK HOLE SIMULATION WITH RAYMARCHED GRAVITATIONAL LENSING
+ * ============================================================================
  *
- * Features implemented:
- * - Gravitational lensing using Schwarzschild geodesics
- * - Accretion disk with temperature-based coloring
+ * This simulation renders a Schwarzschild (non-rotating) black hole with:
+ * - Gravitational lensing of light rays through curved spacetime
+ * - Accretion disk with temperature-based coloring and turbulence
  * - Doppler beaming (relativistic brightness variation)
- * - Photon ring from multiple disk intersections
- * - Black hole shadow
- * - Gravitational redshift
- * - Image of disk's far side and underside via lensing
+ * - Procedural star field and nebula background
+ * - Photon ring at the critical impact parameter
+ *
+ * The code is organized pedagogically for use in a blog post explaining
+ * the physics and implementation of black hole rendering.
+ *
+ * @author Daniel Greenheck
+ * @see BLOG.md for detailed explanation
  */
 
 import * as THREE from 'three/webgpu';
 import {
   uniform,
-  attribute,
   vec2,
   vec3,
   vec4,
   float,
-  int,
   Fn,
-  mix,
   length,
   normalize,
   cross,
   dot,
   sin,
   cos,
-  atan2,
+  atan,
+  asin,
   sqrt,
   abs,
-  max,
-  min,
   pow,
   exp,
-  floor,
   fract,
   clamp,
   smoothstep,
+  mix,
+  sign,
+  floor,
   step,
   Loop,
   Break,
-  Continue,
   If,
-  uv
+  screenUV
 } from 'three/tsl';
 
-// ==============================================================================
-// BLACK HOLE SIMULATION CLASS
-// ==============================================================================
+// ============================================================================
+// SECTION 1: PHYSICAL CONSTANTS AND CONFIGURATION
+// ============================================================================
+
+/**
+ * Quality presets for balancing visual quality vs performance.
+ * These control the raymarching parameters.
+ */
+export const QUALITY_PRESETS = {
+  low: {
+    raySteps: 64,
+    stepSize: 0.4,
+    diskDetail: 1,
+    starsEnabled: false,
+    nebulaEnabled: false
+  },
+  medium: {
+    raySteps: 100,
+    stepSize: 0.3,
+    diskDetail: 2,
+    starsEnabled: true,
+    nebulaEnabled: false
+  },
+  high: {
+    raySteps: 150,
+    stepSize: 0.2,
+    diskDetail: 3,
+    starsEnabled: true,
+    nebulaEnabled: true
+  },
+  ultra: {
+    raySteps: 256,
+    stepSize: 0.15,
+    diskDetail: 4,
+    starsEnabled: true,
+    nebulaEnabled: true
+  }
+};
+
+// ============================================================================
+// SECTION 2: BLACK HOLE SIMULATION CLASS
+// ============================================================================
 
 export class BlackHoleSimulation {
   constructor(scene, config) {
     this.scene = scene;
     this.config = config;
-
-    // Scene objects
     this.blackHoleMesh = null;
-
-    // Initialize uniforms
     this.initializeUniforms(config);
   }
 
   /**
-   * Initialize all shader uniforms
+   * Initialize all shader uniforms with default values.
+   * These can be updated in real-time via the UI.
    */
   initializeUniforms(config) {
     this.uniforms = {
-      // Black hole physics
-      blackHoleMass: uniform(config.blackHoleMass || 1.0),
+      // === Physics ===
+      blackHoleMass: uniform(config.blackHoleMass ?? 1.0),
 
-      // Accretion disk parameters
-      diskInnerRadius: uniform(config.diskInnerRadius || 2.6),
-      diskOuterRadius: uniform(config.diskOuterRadius || 12.0),
+      // === Accretion Disk Geometry ===
+      diskInnerRadius: uniform(config.diskInnerRadius ?? 3.0),
+      diskOuterRadius: uniform(config.diskOuterRadius ?? 12.0),
 
-      // Visual parameters
-      diskTemperature: uniform(config.diskTemperature || 1.5),
-      diskBrightness: uniform(config.diskBrightness || 2.0),
-      dopplerStrength: uniform(config.dopplerStrength || 0.8),
+      // === Accretion Disk Appearance ===
+      diskTemperature: uniform(config.diskTemperature ?? 1.5),
+      diskBrightness: uniform(config.diskBrightness ?? 2.0),
+      diskTurbulence: uniform(config.diskTurbulence ?? 0.5),
+      diskRingCount: uniform(config.diskRingCount ?? 8.0),
+      diskRotationSpeed: uniform(config.diskRotationSpeed ?? 0.3),
 
-      // Camera/view
+      // === Disk Color (User Configurable) ===
+      diskInnerColor: uniform(new THREE.Color(config.diskInnerColor ?? '#ffffee')),
+      diskOuterColor: uniform(new THREE.Color(config.diskOuterColor ?? '#ff4400')),
+
+      // === Relativistic Effects ===
+      dopplerStrength: uniform(config.dopplerStrength ?? 0.8),
+      photonRingIntensity: uniform(config.photonRingIntensity ?? 1.0),
+
+      // === Performance ===
+      raySteps: uniform(config.raySteps ?? 100),
+      stepSize: uniform(config.stepSize ?? 0.3),
+
+      // === Background ===
+      starsEnabled: uniform(config.starsEnabled ? 1.0 : 0.0),
+      starDensity: uniform(config.starDensity ?? 0.003),
+      nebulaEnabled: uniform(config.nebulaEnabled ? 1.0 : 0.0),
+      nebulaBrightness: uniform(config.nebulaBrightness ?? 0.15),
+
+      // === Animation State ===
       time: uniform(0),
+
+      // === Camera ===
       resolution: uniform(new THREE.Vector2(window.innerWidth, window.innerHeight)),
-      cameraPos: uniform(new THREE.Vector3(0, 8, 20)),
+      cameraPosition: uniform(new THREE.Vector3(0, 5, 20)),
       cameraTarget: uniform(new THREE.Vector3(0, 0, 0))
     };
   }
 
   /**
-   * Creates the black hole visualization using a full-screen shader
+   * Create the black hole visualization mesh.
+   * Uses a large inverted sphere as the render surface with a custom TSL shader.
    */
   createBlackHole() {
-    // Clean up old mesh
+    // Clean up existing mesh
     if (this.blackHoleMesh) {
       this.scene.remove(this.blackHoleMesh);
-      if (this.blackHoleMesh.material) {
-        this.blackHoleMesh.material.dispose();
-      }
-      if (this.blackHoleMesh.geometry) {
-        this.blackHoleMesh.geometry.dispose();
-      }
+      this.blackHoleMesh.material?.dispose();
+      this.blackHoleMesh.geometry?.dispose();
     }
 
-    // Create a large sphere that will act as our render surface
-    // Using a sphere ensures we can look around the black hole
-    const geometry = new THREE.SphereGeometry(100, 64, 64);
-
-    // Flip normals to render inside
+    // Create inverted sphere geometry (renders from inside)
+    const geometry = new THREE.SphereGeometry(100, 32, 32);
     geometry.scale(-1, 1, 1);
 
-    // Create custom shader material using TSL
+    // Create material with our raymarching shader
     const material = new THREE.MeshBasicNodeMaterial();
-    material.side = THREE.BackSide;
-
-    // Ray-traced black hole shader
-    const blackHoleShader = this.createBlackHoleShader();
-    material.colorNode = blackHoleShader;
+    material.colorNode = this.createRaymarchingShader();
 
     this.blackHoleMesh = new THREE.Mesh(geometry, material);
     this.blackHoleMesh.frustumCulled = false;
-
     this.scene.add(this.blackHoleMesh);
   }
 
   /**
-   * Creates the main ray-tracing shader for the black hole
-   * Implements gravitational lensing with multiple disk crossings
+   * Main shader creation method.
+   * Builds the complete raymarching shader using Three.js TSL.
    */
-  createBlackHoleShader() {
+  createRaymarchingShader() {
     const uniforms = this.uniforms;
 
-    // Blackbody color function (approximation)
-    const blackbodyColor = Fn(([temperature]) => {
-      const t = clamp(temperature, float(0.1), float(4.0));
+    // ========================================================================
+    // SECTION 3: UTILITY FUNCTIONS
+    // ========================================================================
 
-      // Hot = blue-white, medium = yellow-orange, cool = red
-      // Based on Wien's displacement law approximation
-      const red = clamp(
-        float(1.0).sub(exp(t.sub(1.5).mul(-2.0))).add(
-          exp(t.sub(0.5).mul(-3.0)).mul(0.5)
-        ),
-        float(0.0),
-        float(1.0)
-      );
-
-      const green = clamp(
-        exp(t.sub(1.2).pow(2.0).mul(-2.0)).mul(0.9).add(
-          smoothstep(float(2.0), float(4.0), t).mul(0.8)
-        ),
-        float(0.0),
-        float(1.0)
-      );
-
-      const blue = clamp(
-        smoothstep(float(1.5), float(3.0), t).mul(1.2),
-        float(0.0),
-        float(1.0)
-      );
-
-      return vec3(red, green, blue);
+    /**
+     * Hash function for pseudo-random number generation.
+     * Used for procedural star and noise generation.
+     */
+    const hash21 = Fn(([p]) => {
+      const n = sin(dot(p, vec2(127.1, 311.7))).mul(43758.5453);
+      return fract(n);
     });
 
-    // Main shader function
+    const hash31 = Fn(([p]) => {
+      const n = sin(dot(p, vec3(127.1, 311.7, 74.7))).mul(43758.5453);
+      return fract(n);
+    });
+
+    const hash33 = Fn(([p]) => {
+      const px = fract(sin(dot(p, vec3(127.1, 311.7, 74.7))).mul(43758.5453));
+      const py = fract(sin(dot(p, vec3(269.5, 183.3, 246.1))).mul(43758.5453));
+      const pz = fract(sin(dot(p, vec3(113.5, 271.9, 124.6))).mul(43758.5453));
+      return vec3(px, py, pz);
+    });
+
+    /**
+     * 3D Value noise for turbulence effects.
+     */
+    const noise3D = Fn(([p]) => {
+      const i = floor(p);
+      const f = fract(p);
+
+      // Smooth interpolation
+      const u = f.mul(f).mul(float(3.0).sub(f.mul(2.0)));
+
+      // Hash corners
+      const a = hash31(i);
+      const b = hash31(i.add(vec3(1, 0, 0)));
+      const c = hash31(i.add(vec3(0, 1, 0)));
+      const d = hash31(i.add(vec3(1, 1, 0)));
+      const e = hash31(i.add(vec3(0, 0, 1)));
+      const f2 = hash31(i.add(vec3(1, 0, 1)));
+      const g = hash31(i.add(vec3(0, 1, 1)));
+      const h = hash31(i.add(vec3(1, 1, 1)));
+
+      // Trilinear interpolation
+      return mix(
+        mix(mix(a, b, u.x), mix(c, d, u.x), u.y),
+        mix(mix(e, f2, u.x), mix(g, h, u.x), u.y),
+        u.z
+      );
+    });
+
+    /**
+     * Fractal Brownian Motion - layered noise for natural-looking turbulence.
+     * @param p - 3D position
+     * @param octaves - Number of noise layers (more = more detail but slower)
+     */
+    const fbm = Fn(([p]) => {
+      const value = float(0.0).toVar();
+      const amplitude = float(0.5).toVar();
+      const pos = p.toVar();
+
+      // 4 octaves of noise
+      value.addAssign(noise3D(pos).mul(amplitude));
+      pos.mulAssign(2.0);
+      amplitude.mulAssign(0.5);
+
+      value.addAssign(noise3D(pos).mul(amplitude));
+      pos.mulAssign(2.0);
+      amplitude.mulAssign(0.5);
+
+      value.addAssign(noise3D(pos).mul(amplitude));
+      pos.mulAssign(2.0);
+      amplitude.mulAssign(0.5);
+
+      value.addAssign(noise3D(pos).mul(amplitude));
+
+      return value;
+    });
+
+    // ========================================================================
+    // SECTION 4: PROCEDURAL BACKGROUND
+    // ========================================================================
+
+    /**
+     * Generate procedural star field.
+     * Stars are placed using a grid-based hash function for consistent positions.
+     */
+    const starField = Fn(([rayDir]) => {
+      // Convert ray direction to spherical coordinates for grid
+      const theta = atan(rayDir.z, rayDir.x);
+      const phi = asin(clamp(rayDir.y, float(-1.0), float(1.0)));
+
+      // Create grid cells
+      const gridScale = float(50.0);
+      const cell = vec2(theta, phi).mul(gridScale).floor();
+      const cellUV = fract(vec2(theta, phi).mul(gridScale));
+
+      // Hash for this cell
+      const cellHash = hash21(cell);
+
+      // Star probability - most cells are empty
+      const starProb = step(float(1.0).sub(uniforms.starDensity), cellHash);
+
+      // Star position within cell
+      const starPos = hash33(vec3(cell.x, cell.y, float(42.0))).xy.mul(0.8).add(0.1);
+      const distToStar = length(cellUV.sub(starPos));
+
+      // Star brightness with size variation
+      const starSize = hash21(cell.add(100.0)).mul(0.015).add(0.005);
+      const starBrightness = smoothstep(starSize, float(0.0), distToStar).mul(starProb);
+
+      // Star color variation (blue to yellow)
+      const colorTemp = hash21(cell.add(200.0));
+      const starColor = mix(
+        vec3(0.8, 0.9, 1.0),  // Blue-white
+        vec3(1.0, 0.95, 0.8), // Yellow-white
+        colorTemp
+      );
+
+      return starColor.mul(starBrightness).mul(0.8);
+    });
+
+    /**
+     * Generate procedural nebula clouds.
+     * Uses layered 3D noise for volumetric appearance.
+     */
+    const nebulaField = Fn(([rayDir, time]) => {
+      const noisePos = rayDir.mul(2.0);
+
+      // Multiple noise layers for depth
+      const n1 = fbm(noisePos.add(time.mul(0.01)));
+      const n2 = fbm(noisePos.mul(2.0).sub(time.mul(0.005)));
+
+      // Combine noise layers
+      const nebula = n1.mul(n2).mul(2.0);
+
+      // Color gradient (purple/red/blue nebula colors)
+      const nebulaColor = mix(
+        vec3(0.1, 0.0, 0.2),  // Deep purple
+        vec3(0.3, 0.1, 0.15), // Dusty red
+        n1
+      ).add(vec3(0.05, 0.05, 0.1).mul(n2));
+
+      return nebulaColor.mul(nebula).mul(uniforms.nebulaBrightness);
+    });
+
+    // ========================================================================
+    // SECTION 5: ACCRETION DISK
+    // ========================================================================
+
+    /**
+     * Calculate the color and intensity of the accretion disk at a given point.
+     * Implements temperature-based coloring with ring structure and turbulence.
+     */
+    const accretionDiskColor = Fn(([hitR, hitAngle, time]) => {
+      const innerR = uniforms.diskInnerRadius;
+      const outerR = uniforms.diskOuterRadius;
+
+      // Normalized radius (0 at inner edge, 1 at outer edge)
+      const normR = clamp(hitR.sub(innerR).div(outerR.sub(innerR)), float(0.0), float(1.0));
+
+      // === RING STRUCTURE ===
+      // Multiple ring frequencies create detailed banding
+      const ringFreq = uniforms.diskRingCount;
+      const ring1 = sin(hitR.mul(ringFreq).mul(0.8)).mul(0.5).add(0.5);
+      const ring2 = sin(hitR.mul(ringFreq).mul(2.0).add(time.mul(0.5))).mul(0.3).add(0.7);
+      const ring3 = sin(hitR.mul(ringFreq).mul(5.0).sub(time.mul(0.3))).mul(0.2).add(0.8);
+      const ringPattern = ring1.mul(ring2).mul(ring3);
+
+      // === TURBULENCE ===
+      // Swirling patterns using noise
+      const turbCoord = vec3(
+        cos(hitAngle).mul(hitR.mul(0.3)),
+        sin(hitAngle).mul(hitR.mul(0.3)),
+        time.mul(0.1)
+      );
+      const turb = fbm(turbCoord).mul(uniforms.diskTurbulence);
+
+      // === SPIRAL DENSITY WAVES ===
+      const spiralArms = float(2.0);
+      const spiralTightness = float(0.3);
+      const spiralPhase = hitAngle.add(normR.mul(spiralTightness).mul(6.28318));
+      const spiral = sin(spiralPhase.mul(spiralArms)).mul(0.5).add(0.5);
+
+      // === TEMPERATURE PROFILE ===
+      // Shakura-Sunyaev thin disk: T ~ r^(-3/4)
+      // Hotter near the black hole, cooler at edges
+      const baseTemp = pow(normR.add(0.05), float(-0.75)).mul(uniforms.diskTemperature);
+      const tempVariation = ringPattern.mul(0.2).add(turb.mul(0.15));
+      const finalTemp = clamp(baseTemp.mul(float(0.8).add(tempVariation)), float(0.3), float(4.0));
+
+      // === COLOR FROM TEMPERATURE ===
+      // Interpolate between user-defined inner/outer colors based on temperature
+      const colorMix = smoothstep(float(0.5), float(2.5), finalTemp);
+      const baseColor = mix(uniforms.diskOuterColor, uniforms.diskInnerColor, colorMix);
+
+      // === INTENSITY MODULATION ===
+      const intensity = ringPattern
+        .mul(float(0.7).add(spiral.mul(0.3)))
+        .mul(float(0.85).add(turb.mul(0.3)));
+
+      // Edge falloff - disk fades at boundaries
+      const edgeFalloff = smoothstep(float(0.0), float(0.1), normR)
+        .mul(smoothstep(float(1.0), float(0.9), normR));
+
+      return baseColor.mul(intensity).mul(edgeFalloff).mul(uniforms.diskBrightness);
+    });
+
+    // ========================================================================
+    // SECTION 6: MAIN RAYMARCHING SHADER
+    // ========================================================================
+
     return Fn(() => {
-      // Schwarzschild radius (event horizon) rs = 2GM/c² (using c=1, G=1)
+      // === SCHWARZSCHILD PARAMETERS ===
+      // rs = 2GM/c^2 (in geometric units where G=c=1, rs = 2M)
       const rs = uniforms.blackHoleMass.mul(2.0);
 
-      // Get UV coordinates and convert to ray direction
-      const screenUV = uv().sub(0.5).mul(2.0);
-      const aspect = uniforms.resolution.x.div(uniforms.resolution.y);
-      const adjustedUV = vec2(screenUV.x.mul(aspect), screenUV.y);
+      // Photon sphere radius (where light can orbit)
+      const photonSphere = rs.mul(1.5);
 
-      // Camera setup
-      const camPos = uniforms.cameraPos;
+      // Critical impact parameter - rays closer than this fall in
+      // b_crit = rs * sqrt(27) / 2 ≈ 2.598 * rs
+      const criticalB = rs.mul(2.598);
+
+      // === CAMERA SETUP ===
+      const uv = screenUV.sub(0.5).mul(2.0);
+      const aspect = uniforms.resolution.x.div(uniforms.resolution.y);
+      const screenPos = vec2(uv.x.mul(aspect), uv.y);
+
+      const camPos = uniforms.cameraPosition;
       const camTarget = uniforms.cameraTarget;
 
       // Build camera coordinate system
       const camForward = normalize(camTarget.sub(camPos));
-      const worldUp = vec3(0, 1, 0);
+      const worldUp = vec3(0.0, 1.0, 0.0);
       const camRight = normalize(cross(worldUp, camForward));
       const camUp = cross(camForward, camRight);
 
-      // Ray direction from camera through pixel
-      const fov = float(1.2);
+      // Generate ray direction through pixel
+      const fov = float(1.0);
       const rayDir = normalize(
         camForward.mul(fov)
-          .add(camRight.mul(adjustedUV.x))
-          .add(camUp.mul(adjustedUV.y))
-      );
+          .add(camRight.mul(screenPos.x))
+          .add(camUp.mul(screenPos.y))
+      ).toVar('rayDir');
 
-      // Initialize ray state
+      // === INITIALIZE RAY STATE ===
       const rayPos = camPos.toVar('rayPos');
-      const rayVel = rayDir.toVar('rayVel');
+      const totalDist = float(0.0).toVar('totalDist');
+      const maxDist = float(100.0);
 
-      // Accumulated color
-      const accumulatedColor = vec3(0.0, 0.0, 0.0).toVar('accColor');
-      const accumulatedAlpha = float(0.0).toVar('accAlpha');
+      // Accumulated color with alpha for blending
+      const color = vec3(0.0, 0.0, 0.0).toVar('color');
+      const alpha = float(0.0).toVar('alpha');
 
-      // Track previous Y for disk crossing detection
+      // Track previous position for disk intersection
       const prevY = rayPos.y.toVar('prevY');
 
-      // Track if ray is still active
-      const rayActive = float(1.0).toVar('rayActive');
+      // Ray status
+      const escaped = float(0.0).toVar('escaped');
+      const captured = float(0.0).toVar('captured');
 
-      // Ray marching with gravitational deflection
-      Loop(300, () => {
-        // Early exit if ray is no longer active
-        If(rayActive.lessThan(0.5), () => {
+      // Disk parameters
+      const innerR = uniforms.diskInnerRadius;
+      const outerR = uniforms.diskOuterRadius;
+
+      // === RAYMARCHING LOOP ===
+      // Trace ray through curved spacetime
+      Loop(256, () => {
+        // Check if we've already terminated
+        If(escaped.greaterThan(0.5).or(captured.greaterThan(0.5)).or(alpha.greaterThan(0.99)), () => {
           Break();
         });
 
         const r = length(rayPos);
 
-        // Check if ray fell into black hole (inside event horizon)
+        // === TERMINATION: CAPTURED BY BLACK HOLE ===
         If(r.lessThan(rs.mul(1.01)), () => {
-          // Black hole - no light escapes
-          rayActive.assign(0.0);
+          captured.assign(1.0);
           Break();
         });
 
-        // Check if ray escaped to infinity
-        If(r.greaterThan(60.0), () => {
-          // Add subtle background stars
-          const starNoise = fract(sin(dot(rayDir.xz, vec2(12.9898, 78.233))).mul(43758.5453));
-          const star = step(float(0.998), starNoise).mul(0.3);
-          accumulatedColor.addAssign(vec3(star, star, star.mul(1.2)));
-          rayActive.assign(0.0);
+        // === TERMINATION: ESCAPED TO INFINITY ===
+        If(totalDist.greaterThan(maxDist), () => {
+          escaped.assign(1.0);
           Break();
         });
 
-        // Gravitational bending of light (Schwarzschild geodesic approximation)
-        // Using the effective potential for light: d²u/dφ² + u = 3GMu²/c² (with u = 1/r)
-        // This creates the gravitational lensing effect
-        const hVec = cross(rayPos, rayVel);
-        const h2 = dot(hVec, hVec); // Angular momentum squared
-
-        // Acceleration towards black hole with relativistic correction
-        // a = -GM/r² * r_hat + correction for light bending
-        const rNorm = normalize(rayPos);
-        const baseAccel = rs.div(r.mul(r)).mul(0.5);
-
-        // Relativistic correction term (stronger near photon sphere at 1.5rs)
-        const correction = rs.mul(h2).mul(1.5).div(r.mul(r).mul(r).mul(r));
-
-        const accelMag = baseAccel.add(correction);
-        const accel = rNorm.mul(accelMag.negate());
-
-        // Adaptive step size (smaller steps closer to black hole)
-        const adaptiveStep = float(0.15).mul(
-          clamp(r.div(rs.mul(3.0)), float(0.3), float(2.0))
+        // === ADAPTIVE STEP SIZE ===
+        // Smaller steps near the black hole for accuracy
+        const distFromHorizon = r.sub(rs);
+        const adaptiveStep = uniforms.stepSize.mul(
+          smoothstep(float(0.0), rs.mul(5.0), distFromHorizon)
+            .mul(0.8).add(0.2)
         );
 
-        // Velocity Verlet integration
-        const halfAccel = accel.mul(adaptiveStep.mul(0.5));
-        rayVel.addAssign(halfAccel);
-        rayPos.addAssign(rayVel.mul(adaptiveStep));
-        rayVel.addAssign(halfAccel);
+        // === GRAVITATIONAL LIGHT BENDING ===
+        // Simplified geodesic: acceleration toward black hole
+        // Based on Schwarzschild metric: a ≈ -rs/(2r^2) * r_hat
+        const toCenter = rayPos.negate().normalize();
+        const bendStrength = rs.div(r.mul(r)).mul(adaptiveStep).mul(1.5);
 
-        // Renormalize velocity (light always travels at c=1)
-        rayVel.assign(normalize(rayVel));
+        // Apply bending to ray direction
+        rayDir.addAssign(toCenter.mul(bendStrength));
+        rayDir.assign(normalize(rayDir));
 
-        // Check for disk intersection (disk is at y=0 plane)
+        // Store previous Y for disk intersection detection
+        prevY.assign(rayPos.y);
+
+        // Step ray forward
+        rayPos.addAssign(rayDir.mul(adaptiveStep));
+        totalDist.addAssign(adaptiveStep);
+
+        // === DISK INTERSECTION DETECTION ===
+        // Check if ray crossed the disk plane (y = 0)
         const currY = rayPos.y;
-        const crossed = prevY.mul(currY).lessThan(0.0);
+        const crossed = sign(prevY).notEqual(sign(currY));
 
-        If(crossed, () => {
-          // Calculate crossing point via linear interpolation
-          const tCross = abs(prevY).div(abs(prevY).add(abs(currY)).max(0.0001));
-          const crossX = rayPos.x.sub(rayVel.x.mul(adaptiveStep.mul(float(1.0).sub(tCross))));
-          const crossZ = rayPos.z.sub(rayVel.z.mul(adaptiveStep.mul(float(1.0).sub(tCross))));
-          const crossR = sqrt(crossX.mul(crossX).add(crossZ.mul(crossZ)));
+        If(crossed.and(alpha.lessThan(0.95)), () => {
+          // Interpolate exact crossing point
+          const t = abs(prevY).div(abs(prevY).add(abs(currY)).max(0.0001));
+          const hitX = rayPos.x.sub(rayDir.x.mul(adaptiveStep.mul(float(1.0).sub(t))));
+          const hitZ = rayPos.z.sub(rayDir.z.mul(adaptiveStep.mul(float(1.0).sub(t))));
+          const hitR = sqrt(hitX.mul(hitX).add(hitZ.mul(hitZ)));
 
           // Check if within disk bounds
-          const innerR = uniforms.diskInnerRadius;
-          const outerR = uniforms.diskOuterRadius;
+          If(hitR.greaterThan(innerR).and(hitR.lessThan(outerR)), () => {
+            const hitAngle = atan(hitZ, hitX);
 
-          If(crossR.greaterThan(innerR).and(crossR.lessThan(outerR)), () => {
-            // Calculate disk emission at this point
-
-            // Normalized radius (0 at inner edge, 1 at outer edge)
-            const normR = crossR.sub(innerR).div(outerR.sub(innerR));
-
-            // Temperature profile: T ~ r^(-3/4) for standard thin disk
-            // Hottest near inner edge
-            const temp = pow(normR.add(0.05), float(-0.75)).mul(uniforms.diskTemperature);
-
-            // Get base color from temperature
-            const baseColor = blackbodyColor(temp);
+            // Get disk color at this point
+            const diskCol = accretionDiskColor(hitR, hitAngle, uniforms.time);
 
             // === DOPPLER BEAMING ===
-            // Disk rotates counter-clockwise when viewed from above
-            // Material moving towards us appears brighter (blue-shifted)
-            // Material moving away appears dimmer (red-shifted)
-            const diskAngle = atan2(crossZ, crossX);
-            const rotPhase = diskAngle.add(uniforms.time.mul(0.3));
-
-            // Keplerian orbital velocity: v = sqrt(GM/r)
-            // For this visualization, we use a simplified model
-            const orbitalSpeed = sqrt(uniforms.blackHoleMass.div(crossR)).mul(0.5);
-
-            // Disk velocity direction (perpendicular to radius, in rotation direction)
-            const diskVelX = sin(diskAngle).negate().mul(orbitalSpeed);
-            const diskVelZ = cos(diskAngle).mul(orbitalSpeed);
-            const diskVel = vec3(diskVelX, 0.0, diskVelZ);
-
-            // View direction (where light is going)
-            const viewDir = rayVel.negate();
-
-            // Doppler factor: D = 1 / (γ(1 - β·n))
-            // For relativistic beaming, intensity ~ D^3 (or D^4 for spectral)
-            const beta = dot(diskVel, viewDir).mul(uniforms.dopplerStrength);
-            const dopplerBoost = pow(float(1.0).add(beta).max(0.1), float(3.0));
+            // Material orbits the black hole - approaching side is brighter
+            const orbitalSpeed = sqrt(uniforms.blackHoleMass.div(hitR)).mul(0.4);
+            const velDir = vec3(sin(hitAngle).negate(), float(0.0), cos(hitAngle));
+            const dopplerFactor = float(1.0).add(
+              dot(velDir, rayDir.negate()).mul(orbitalSpeed).mul(uniforms.dopplerStrength)
+            );
+            const doppler = pow(clamp(dopplerFactor, float(0.5), float(2.0)), float(3.0));
 
             // === GRAVITATIONAL REDSHIFT ===
             // Light loses energy climbing out of gravity well
-            // Redshift factor = sqrt(1 - rs/r)
-            const gravRedshift = sqrt(float(1.0).sub(rs.div(crossR)).max(0.01));
+            const redshift = sqrt(clamp(float(1.0).sub(rs.div(hitR)), float(0.1), float(1.0)));
 
-            // === LIMB DARKENING ===
-            // Edge of disk appears slightly dimmer
-            const limbDark = sqrt(float(1.0).sub(normR.mul(0.3)));
-
-            // === PHOTON RING ENHANCEMENT ===
-            // Light that has orbited the black hole creates bright thin rings
-            // These appear very close to the photon sphere projection
-            const distFromCenter = crossR.div(rs.mul(1.5)); // Distance from photon sphere
-            const nearPhotonSphere = smoothstep(float(1.0), float(1.8), distFromCenter)
-              .mul(smoothstep(float(3.0), float(2.0), distFromCenter));
-
-            // Ring structure from multiple images
-            const ringBoost = float(1.0).add(nearPhotonSphere.mul(0.5));
-
-            // Combine all effects
-            const brightness = uniforms.diskBrightness
-              .mul(dopplerBoost)
-              .mul(gravRedshift)
-              .mul(limbDark)
-              .mul(ringBoost)
-              .mul(clamp(temp.mul(0.7), float(0.5), float(3.0)));
-
-            // Add noise for turbulence in the disk
-            const turbulence = fract(
-              sin(crossX.mul(12.9898).add(crossZ.mul(78.233)).add(uniforms.time.mul(2.0)))
-                .mul(43758.5453)
-            ).mul(0.15).add(0.92);
-
-            const diskEmission = baseColor.mul(brightness).mul(turbulence);
-
-            // Accumulate with diminishing contribution for secondary images
-            const contribution = float(1.0).sub(accumulatedAlpha).mul(0.9);
-            accumulatedColor.addAssign(diskEmission.mul(contribution));
-            accumulatedAlpha.addAssign(contribution.mul(0.7));
-
-            // Stop if we've accumulated enough
-            If(accumulatedAlpha.greaterThan(0.95), () => {
-              rayActive.assign(0.0);
-            });
+            // Accumulate color with alpha blending
+            const contribution = diskCol.mul(doppler).mul(redshift);
+            const remainingAlpha = float(1.0).sub(alpha);
+            color.addAssign(contribution.mul(remainingAlpha));
+            alpha.addAssign(remainingAlpha.mul(0.85));
           });
         });
-
-        prevY.assign(currY);
       });
 
-      // Apply tone mapping (ACES-like)
+      // === BACKGROUND (for escaped rays) ===
+      If(escaped.greaterThan(0.5).and(alpha.lessThan(0.99)), () => {
+        const bgColor = vec3(0.0, 0.0, 0.0).toVar('bgColor');
+
+        // Add stars if enabled
+        If(uniforms.starsEnabled.greaterThan(0.5), () => {
+          const stars = starField(rayDir);
+          bgColor.addAssign(stars);
+        });
+
+        // Add nebula if enabled
+        If(uniforms.nebulaEnabled.greaterThan(0.5), () => {
+          const nebula = nebulaField(rayDir, uniforms.time);
+          bgColor.addAssign(nebula);
+        });
+
+        // Blend background with accumulated disk color
+        color.addAssign(bgColor.mul(float(1.0).sub(alpha)));
+      });
+
+      // === PHOTON RING ===
+      // Bright ring at the critical impact parameter
+      // Calculate impact parameter for this ray
+      const impactParam = length(cross(camPos, rayDir)).div(length(rayDir));
+      const ringDist = abs(impactParam.sub(criticalB));
+      const ringIntensity = exp(ringDist.div(float(0.2)).negate())
+        .mul(uniforms.photonRingIntensity)
+        .mul(float(1.0).sub(captured));
+
+      color.addAssign(vec3(1.0, 0.95, 0.8).mul(ringIntensity).mul(0.5));
+
+      // === TONE MAPPING (ACES Filmic) ===
       const a = float(2.51);
       const b = float(0.03);
       const c = float(2.43);
@@ -371,70 +576,101 @@ export class BlackHoleSimulation {
       const e = float(0.14);
 
       const toneMapped = clamp(
-        accumulatedColor.mul(accumulatedColor.mul(a).add(b))
-          .div(accumulatedColor.mul(accumulatedColor.mul(c).add(d)).add(e)),
+        color.mul(color.mul(a).add(b))
+          .div(color.mul(color.mul(c).add(d)).add(e)),
         vec3(0.0),
         vec3(1.0)
       );
 
-      // Gamma correction
-      const gamma = vec3(1.0 / 2.2);
-      const finalColor = pow(toneMapped, gamma);
+      // === GAMMA CORRECTION ===
+      const finalColor = pow(toneMapped, vec3(1.0 / 2.2));
 
       return vec4(finalColor, 1.0);
     })();
   }
 
+  // ==========================================================================
+  // SECTION 7: PUBLIC API
+  // ==========================================================================
+
   /**
-   * Update uniforms each frame
+   * Update uniform values from config object.
+   * Called when UI controls change.
    */
-  updateUniforms(configUpdate) {
-    if (configUpdate.blackHoleMass !== undefined)
-      this.uniforms.blackHoleMass.value = configUpdate.blackHoleMass;
-    if (configUpdate.diskInnerRadius !== undefined)
-      this.uniforms.diskInnerRadius.value = configUpdate.diskInnerRadius;
-    if (configUpdate.diskOuterRadius !== undefined)
-      this.uniforms.diskOuterRadius.value = configUpdate.diskOuterRadius;
-    if (configUpdate.diskTemperature !== undefined)
-      this.uniforms.diskTemperature.value = configUpdate.diskTemperature;
-    if (configUpdate.diskBrightness !== undefined)
-      this.uniforms.diskBrightness.value = configUpdate.diskBrightness;
-    if (configUpdate.dopplerStrength !== undefined)
-      this.uniforms.dopplerStrength.value = configUpdate.dopplerStrength;
+  updateUniforms(config) {
+    const u = this.uniforms;
+
+    if (config.blackHoleMass !== undefined) u.blackHoleMass.value = config.blackHoleMass;
+    if (config.diskInnerRadius !== undefined) u.diskInnerRadius.value = config.diskInnerRadius;
+    if (config.diskOuterRadius !== undefined) u.diskOuterRadius.value = config.diskOuterRadius;
+    if (config.diskTemperature !== undefined) u.diskTemperature.value = config.diskTemperature;
+    if (config.diskBrightness !== undefined) u.diskBrightness.value = config.diskBrightness;
+    if (config.diskTurbulence !== undefined) u.diskTurbulence.value = config.diskTurbulence;
+    if (config.diskRingCount !== undefined) u.diskRingCount.value = config.diskRingCount;
+    if (config.diskRotationSpeed !== undefined) u.diskRotationSpeed.value = config.diskRotationSpeed;
+    if (config.dopplerStrength !== undefined) u.dopplerStrength.value = config.dopplerStrength;
+    if (config.photonRingIntensity !== undefined) u.photonRingIntensity.value = config.photonRingIntensity;
+    if (config.raySteps !== undefined) u.raySteps.value = config.raySteps;
+    if (config.stepSize !== undefined) u.stepSize.value = config.stepSize;
+    if (config.starsEnabled !== undefined) u.starsEnabled.value = config.starsEnabled ? 1.0 : 0.0;
+    if (config.starDensity !== undefined) u.starDensity.value = config.starDensity;
+    if (config.nebulaEnabled !== undefined) u.nebulaEnabled.value = config.nebulaEnabled ? 1.0 : 0.0;
+    if (config.nebulaBrightness !== undefined) u.nebulaBrightness.value = config.nebulaBrightness;
+
+    // Color uniforms
+    if (config.diskInnerColor !== undefined) {
+      u.diskInnerColor.value.set(config.diskInnerColor);
+    }
+    if (config.diskOuterColor !== undefined) {
+      u.diskOuterColor.value.set(config.diskOuterColor);
+    }
   }
 
   /**
-   * Update camera position from Three.js camera
+   * Apply a quality preset.
+   */
+  applyQualityPreset(presetName) {
+    const preset = QUALITY_PRESETS[presetName];
+    if (!preset) return;
+
+    this.updateUniforms({
+      raySteps: preset.raySteps,
+      stepSize: preset.stepSize,
+      starsEnabled: preset.starsEnabled,
+      nebulaEnabled: preset.nebulaEnabled
+    });
+  }
+
+  /**
+   * Update camera position uniform from Three.js camera.
    */
   updateCamera(camera) {
-    this.uniforms.cameraPos.value.copy(camera.position);
+    this.uniforms.cameraPosition.value.copy(camera.position);
 
-    // Get camera look-at direction
-    const dir = new THREE.Vector3(0, 0, -1);
-    dir.applyQuaternion(camera.quaternion);
-
-    // Set target as point along view direction
-    const target = camera.position.clone().add(dir.multiplyScalar(10));
+    // Calculate camera target from view direction
+    const direction = new THREE.Vector3(0, 0, -1);
+    direction.applyQuaternion(camera.quaternion);
+    const target = camera.position.clone().add(direction.multiplyScalar(10));
     this.uniforms.cameraTarget.value.copy(target);
   }
 
   /**
-   * Main update loop
+   * Main update method - called each frame.
    */
-  update(renderer, deltaTime, camera) {
+  update(deltaTime, camera) {
     this.uniforms.time.value += deltaTime;
     this.updateCamera(camera);
   }
 
   /**
-   * Handle window resize
+   * Handle window resize.
    */
   onResize(width, height) {
     this.uniforms.resolution.value.set(width, height);
   }
 
   /**
-   * Regenerate the black hole
+   * Regenerate the black hole mesh (e.g., after config changes).
    */
   regenerate() {
     this.createBlackHole();
