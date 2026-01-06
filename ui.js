@@ -24,7 +24,7 @@ export class BlackHoleUI {
     this.setupPerformanceFolder();
     this.setupBlackHoleFolder();
     this.setupAccretionDiskFolder();
-    this.setupDiskColorFolder();
+    // Note: Disk color folder removed - colors are now computed from blackbody radiation
     this.setupEffectsFolder();
     this.setupStarsFolder();
     this.setupNebulaFolder();
@@ -266,12 +266,22 @@ export class BlackHoleUI {
     });
 
     appearanceFolder.addBinding(this.config, 'diskTemperature', {
-      min: 0.1,
-      max: 2.0,
-      step: 0.01,
-      label: 'Temperature'
+      min: 1,
+      max: 50,
+      step: 1,
+      label: 'Peak Temp (kK)',
+      format: (v) => `${v.toFixed(0)}k K`
     }).on('change', () => {
       this.callbacks.onUniformChange('diskTemperature', this.config.diskTemperature);
+    });
+
+    appearanceFolder.addBinding(this.config, 'temperatureFalloff', {
+      min: 0.25,
+      max: 5.0,
+      step: 0.01,
+      label: 'Temp Falloff'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('temperatureFalloff', this.config.temperatureFalloff);
     });
 
     // === Ring Pattern ===
@@ -315,7 +325,7 @@ export class BlackHoleUI {
 
     ringFolder.addBinding(this.config, 'ringSharpness', {
       min: 0.1,
-      max: 5.0,
+      max: 10.0,
       step: 0.1,
       label: 'Sharpness'
     }).on('change', () => {
@@ -329,19 +339,19 @@ export class BlackHoleUI {
     });
 
     rotationFolder.addBinding(this.config, 'diskRotationSpeed', {
-      min: -2.0,
-      max: 2.0,
+      min: -20.0,
+      max: 20.0,
       step: 0.01,
-      label: 'Rotation Speed'
+      label: 'Keplerian Speed'
     }).on('change', () => {
       this.callbacks.onUniformChange('diskRotationSpeed', this.config.diskRotationSpeed);
     });
 
     rotationFolder.addBinding(this.config, 'ringTwist', {
-      min: 0.0,
-      max: 10.0,
-      step: 0.1,
-      label: 'Twist'
+      min: 1.0,
+      max: 20.0,
+      step: 0.5,
+      label: 'Arc Stretch'
     }).on('change', () => {
       this.callbacks.onUniformChange('ringTwist', this.config.ringTwist);
     });
@@ -422,28 +432,7 @@ export class BlackHoleUI {
     });
   }
 
-  // ==========================================================================
-  // DISK COLOR CUSTOMIZATION
-  // ==========================================================================
-
-  setupDiskColorFolder() {
-    const colorFolder = this.pane.addFolder({
-      title: 'Disk Colors',
-      expanded: false
-    });
-
-    colorFolder.addBinding(this.config, 'diskInnerColor', {
-      label: 'Inner (Hot)'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('diskInnerColor', this.config.diskInnerColor);
-    });
-
-    colorFolder.addBinding(this.config, 'diskOuterColor', {
-      label: 'Outer (Cool)'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('diskOuterColor', this.config.diskOuterColor);
-    });
-  }
+  // Note: Disk color is now computed from blackbody radiation based on temperature
 
   // ==========================================================================
   // RELATIVISTIC EFFECTS

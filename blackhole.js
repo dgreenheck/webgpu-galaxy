@@ -78,23 +78,29 @@ export class BlackHoleSimulation {
       blackHoleMass: uniform(config.blackHoleMass ?? 1.0),
 
       // === Accretion Disk Geometry ===
+      // Inner radius constrained to ISCO (Innermost Stable Circular Orbit)
+      // For Schwarzschild black hole: ISCO = 3 × rs (where rs = 2M = 2.0 in our units)
       diskInnerRadius: uniform(config.diskInnerRadius ?? 3.0),
       diskOuterRadius: uniform(config.diskOuterRadius ?? 12.0),
 
       // === Accretion Disk Appearance ===
-      diskTemperature: uniform(config.diskTemperature ?? 1.5),
+      // Peak temperature in thousands of Kelvin (at inner edge)
+      // Typical values: 5-50 (5,000K - 50,000K)
+      diskTemperature: uniform(config.diskTemperature ?? 10.0),
+      // Temperature falloff exponent: 0.75 = physical (Shakura-Sunyaev), higher = steeper
+      temperatureFalloff: uniform(config.temperatureFalloff ?? 0.75),
       diskBrightness: uniform(config.diskBrightness ?? 2.0),
       diskRotationSpeed: uniform(config.diskRotationSpeed ?? 0.3),
       diskInnerThickness: uniform(config.diskInnerThickness ?? 0.1),
       diskOuterThickness: uniform(config.diskOuterThickness ?? 0.8),
 
-      // === Ring Pattern Controls ===
+      // === Ring Pattern Controls (Turbulence with Keplerian Advection) ===
       ringEnabled: uniform(config.ringEnabled ? 1.0 : 0.0),
       ringScale: uniform(config.ringScale ?? 1.0),
       ringContrast: uniform(config.ringContrast ?? 1.5),
       ringBrightness: uniform(config.ringBrightness ?? 0.3),
       ringSharpness: uniform(config.ringSharpness ?? 1.0),
-      ringTwist: uniform(config.ringTwist ?? 0.5),
+      ringTwist: uniform(config.ringTwist ?? 5.0),
       noiseAnimFrequency: uniform(config.noiseAnimFrequency ?? 1.0),
       noiseAnimAmplitude: uniform(config.noiseAnimAmplitude ?? 0.5),
 
@@ -103,9 +109,7 @@ export class BlackHoleSimulation {
       diskEdgeSoftnessOuter: uniform(config.diskEdgeSoftnessOuter ?? 0.15),
       diskRadialFalloff: uniform(config.diskRadialFalloff ?? 0.5),
 
-      // === Disk Color (User Configurable) ===
-      diskInnerColor: uniform(new THREE.Color(config.diskInnerColor ?? '#ffffee')),
-      diskOuterColor: uniform(new THREE.Color(config.diskOuterColor ?? '#ff4400')),
+      // Note: Disk color is now computed from blackbody radiation based on temperature
 
       // === Relativistic Effects ===
       gravitationalLensing: uniform(config.gravitationalLensing ?? 1.5),
@@ -207,10 +211,11 @@ export class BlackHoleSimulation {
 
     // Disk appearance
     if (config.diskTemperature !== undefined) u.diskTemperature.value = config.diskTemperature;
+    if (config.temperatureFalloff !== undefined) u.temperatureFalloff.value = config.temperatureFalloff;
     if (config.diskBrightness !== undefined) u.diskBrightness.value = config.diskBrightness;
     if (config.diskRotationSpeed !== undefined) u.diskRotationSpeed.value = config.diskRotationSpeed;
 
-    // Ring pattern
+    // Ring pattern (with Keplerian advection)
     if (config.ringEnabled !== undefined) u.ringEnabled.value = config.ringEnabled ? 1.0 : 0.0;
     if (config.ringScale !== undefined) u.ringScale.value = config.ringScale;
     if (config.ringContrast !== undefined) u.ringContrast.value = config.ringContrast;
@@ -260,13 +265,7 @@ export class BlackHoleSimulation {
     if (config.nebula2Brightness !== undefined) u.nebula2Brightness.value = config.nebula2Brightness;
     if (config.nebula2Color !== undefined) u.nebula2Color.value.set(config.nebula2Color);
 
-    // Color uniforms
-    if (config.diskInnerColor !== undefined) {
-      u.diskInnerColor.value.set(config.diskInnerColor);
-    }
-    if (config.diskOuterColor !== undefined) {
-      u.diskOuterColor.value.set(config.diskOuterColor);
-    }
+    // Note: Disk color is computed from blackbody radiation (no color uniforms needed)
   }
 
   /**

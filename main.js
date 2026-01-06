@@ -19,9 +19,8 @@ import { BlackHoleUI } from './ui.js';
 const STORAGE_KEY = 'blackhole-simulation-config';
 
 // List of color property keys that need normalization
+// Note: diskInnerColor/diskOuterColor removed - now using blackbody radiation
 const COLOR_PROPERTIES = [
-  'diskInnerColor',
-  'diskOuterColor',
   'starBackgroundColor',
   'nebula1Color',
   'nebula2Color'
@@ -115,17 +114,21 @@ const defaultConfig = {
   diskOuterThickness: 0.8,
 
   // Accretion disk appearance
-  diskTemperature: 1.5,
+  // Peak temperature in thousands of Kelvin (at inner edge)
+  // Lower values (3-5) = red/orange, higher (8-10) = white/blue-white
+  diskTemperature: 5.0,
+  // Temperature falloff: 0.75 = physical, higher = steeper color gradient
+  temperatureFalloff: 0.75,
   diskBrightness: 2.0,
   diskRotationSpeed: 0.3,
 
-  // Ring pattern
+  // Ring pattern (turbulence with Keplerian advection)
   ringEnabled: true,
   ringScale: 1.0,
   ringContrast: 1.5,
   ringBrightness: 0.3,
   ringSharpness: 1.0,
-  ringTwist: 0.5,
+  ringTwist: 5.0, // Higher = more azimuthal stretch = longer arcs
   noiseAnimFrequency: 1.0,
   noiseAnimAmplitude: 0.5,
 
@@ -134,9 +137,7 @@ const defaultConfig = {
   diskEdgeSoftnessOuter: 0.15,
   diskRadialFalloff: 0.5,
 
-  // Disk colors (user configurable)
-  diskInnerColor: '#ffffee',
-  diskOuterColor: '#ff4400',
+  // Note: Disk color is now computed from blackbody radiation
 
   // Relativistic effects
   gravitationalLensing: 1.5,
@@ -199,7 +200,7 @@ camera.lookAt(0, 0, 0);
 const renderer = new THREE.WebGPURenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMapping = THREE.NeutralToneMapping;
 document.body.appendChild(renderer.domElement);
 
 // ============================================================================

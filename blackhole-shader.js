@@ -25,7 +25,6 @@ import {
   atan,
   asin,
   sqrt,
-  abs,
   pow,
   fract,
   clamp,
@@ -119,6 +118,36 @@ const fbm = Fn(([p]) => {
   return value;
 });
 
+/**
+ * Convert temperature in Kelvin to RGB color using blackbody radiation.
+ * Uses a branchless implementation for reliable shader compilation.
+ * Based on color temperature approximation with smooth interpolation.
+ * Valid for temperatures ~1000K to ~10000K.
+ */
+const blackbodyColor = Fn(([tempK]) => {
+  // Normalize temperature: 1000K -> 0, 10000K -> 1
+  const t = clamp(tempK.sub(1000.0).div(9000.0), float(0.0), float(1.0));
+
+  // Color stops for blackbody radiation (physically motivated):
+  // 1000K: deep red-orange (like hot coals)
+  // 2000K: orange
+  // 3500K: yellow-orange
+  // 5500K: white (like the sun)
+  // 10000K: blue-white
+
+  // Red: starts high, stays high until very hot
+  const red = clamp(float(1.0).sub(t.sub(0.8).mul(2.0)), float(0.5), float(1.0));
+
+  // Green: starts low (red-orange), increases to white, slight decrease at blue-white
+  const green = smoothstep(float(0.0), float(0.5), t)
+    .mul(float(1.0).sub(t.sub(0.7).mul(0.3).max(0.0)));
+
+  // Blue: near zero for cool temps, rises significantly only at high temps
+  const blue = smoothstep(float(0.3), float(1.0), t).mul(t);
+
+  return vec3(red, green, blue);
+});
+
 // ============================================================================
 // SECTION 2: PROCEDURAL BACKGROUND
 // ============================================================================
@@ -203,54 +232,65 @@ const createAccretionDiskColor = (uniforms) => Fn(([hitR, hitAngle, time]) => {
   // Normalized radius (0 at inner edge, 1 at outer edge)
   const normR = clamp(hitR.sub(innerR).div(outerR.sub(innerR)), float(0.0), float(1.0));
 
-  // === BLACKBODY DISK COLOR (pure radial temperature profile) ===
-  // Shakura-Sunyaev thin disk: T ~ r^(-3/4)
-  const temperature = pow(normR.add(0.05), float(-0.75)).mul(uniforms.diskTemperature);
-
-  // Interpolate between user-defined inner/outer colors based on temperature
-  const colorMix = smoothstep(float(0.5), float(2.5), temperature);
-  const diskColor = mix(uniforms.diskOuterColor, uniforms.diskInnerColor, colorMix);
+  // === BLACKBODY DISK COLOR ===
+  // Temperature profile inspired by Shakura-Sunyaev thin disk model
+  // Peak temperature at inner edge (ISCO), falling to cooler outer regions
+  // diskTemperature is in thousands of Kelvin (e.g., 5 = 5,000K peak)
+  // temperatureFalloff controls steepness: 0.75 = physical, higher = steeper gradient
+  const peakTempK = uniforms.diskTemperature.mul(1000.0);
+  const outerTempK = float(1500.0); // Minimum temperature at outer edge (red-orange glow)
+  // Use power law falloff but ensure we stay in visible range
+  const tempFalloff = pow(innerR.div(hitR), uniforms.temperatureFalloff);
+  const tempK = mix(outerTempK, peakTempK, tempFalloff);
+  const diskColor = blackbodyColor(tempK);
 
   // Edge falloff - disk fades at boundaries
   const edgeFalloff = smoothstep(float(0.0), uniforms.diskEdgeSoftnessInner, normR)
     .mul(smoothstep(float(1.0), float(1.0).sub(uniforms.diskEdgeSoftnessOuter), normR));
 
-  // === RING PATTERN ===
+  // === TURBULENT RING PATTERN WITH KEPLERIAN ADVECTION ===
+  // Models MRI (Magneto-Rotational Instability) turbulence in accretion disks
   const ringOpacity = float(1.0).toVar('ringOpacity');
 
-  If(uniforms.ringEnabled.greaterThan(0.5), () => {
-    // Uniform rotation
-    const rotation = time.mul(uniforms.diskRotationSpeed);
+  // Static base coordinates (no time accumulation - prevents progressive tightening)
+  const cartX = cos(hitAngle);
+  const cartY = sin(hitAngle);
 
-    // Static twist based on radius
-    const staticTwist = hitR.add(1.0).log().mul(uniforms.ringTwist);
+  // === ANISOTROPIC NOISE SAMPLING ===
+  // Turbulent eddies get stretched azimuthally by differential rotation
+  // - X = radial position (scaled up = more rings)
+  // - Y,Z = Cartesian azimuthal coords (scaled down = stretched arcs)
+  const radialScale = uniforms.ringScale;
+  const azimuthalScale = float(1.0).div(uniforms.ringTwist.max(0.1));
 
-    // Combined angle
-    const sampleAngle = hitAngle.add(rotation).add(staticTwist);
+  // Keplerian phase for animation (oscillates, doesn't accumulate)
+  // Inner regions animate faster than outer regions
+  const keplerianPhase = time.mul(uniforms.diskRotationSpeed).div(pow(hitR, float(1.5)));
 
-    // Cartesian coordinates for noise
-    const noiseX = hitR.mul(cos(sampleAngle));
-    const noiseY = hitR.mul(sin(sampleAngle));
+  // Domain warping with Keplerian-varying animation
+  // The warp itself rotates at different speeds for different radii
+  const warpX = cartX.mul(cos(keplerianPhase)).sub(cartY.mul(sin(keplerianPhase)));
+  const warpY = cartX.mul(sin(keplerianPhase)).add(cartY.mul(cos(keplerianPhase)));
+  const warpCoord = vec3(hitR, warpX, warpY).mul(uniforms.noiseAnimFrequency);
+  const warp = fbm(warpCoord).mul(uniforms.noiseAnimAmplitude);
 
-    // Domain warping: sample a second noise field to generate Z coordinate
-    // As the disk rotates, noiseX/noiseY change, causing zWarp to evolve smoothly
-    // This creates organic animation tied to rotation without decorrelation
-    const warpCoord = vec3(noiseX, noiseY, hitR).mul(uniforms.noiseAnimFrequency);
-    const zWarp = fbm(warpCoord).mul(uniforms.noiseAnimAmplitude);
+  // Sample turbulence: radial coord creates rings, azimuthal coords create arcs
+  const noiseCoord = vec3(
+    hitR.mul(radialScale),
+    cartX.mul(azimuthalScale).add(warp),
+    cartY.mul(azimuthalScale)
+  );
+  const turbulence = fbm(noiseCoord);
 
-    // Sample 3D FBM noise with warped Z
-    const noiseCoord = vec3(noiseX, noiseY, zWarp).mul(uniforms.ringScale);
-    const ringNoise = fbm(noiseCoord);
+  // Apply contrast, brightness, and sharpness
+  const rawRing = turbulence.mul(uniforms.ringContrast).add(uniforms.ringBrightness);
+  ringOpacity.assign(pow(clamp(rawRing, float(0.0), float(1.0)), uniforms.ringSharpness));
 
-    // Apply contrast, brightness, and sharpness
-    const rawRing = ringNoise.mul(uniforms.ringContrast).add(uniforms.ringBrightness);
-    ringOpacity.assign(pow(clamp(rawRing, float(0.0), float(1.0)), uniforms.ringSharpness));
-  });
+  // Combine ring opacity with edge falloff (fades to transparent, not black)
+  const finalOpacity = ringOpacity.mul(edgeFalloff);
 
-  const finalOpacity = ringOpacity;
-
-  // Return vec4: rgb = disk color (with edge falloff and brightness), a = opacity
-  const finalColor = diskColor.mul(edgeFalloff).mul(uniforms.diskBrightness);
+  // Return vec4: rgb = disk color with brightness, a = opacity with edge falloff
+  const finalColor = diskColor.mul(uniforms.diskBrightness);
   return vec4(finalColor, finalOpacity);
 });
 
@@ -297,6 +337,7 @@ export function createBlackHoleShader(uniforms) {
 
     // === INITIALIZE RAY STATE ===
     const rayPos = camPos.toVar('rayPos');
+    const prevPos = camPos.toVar('prevPos');
 
     // Accumulated color with alpha for blending
     const color = vec3(0.0, 0.0, 0.0).toVar('color');
@@ -311,7 +352,7 @@ export function createBlackHoleShader(uniforms) {
     const outerR = uniforms.diskOuterRadius;
 
     // === RAYMARCHING LOOP ===
-    Loop(128, () => {
+    Loop(64, () => {
       // Check if we've already terminated
       If(escaped.greaterThan(0.5).or(captured.greaterThan(0.5)).or(alpha.greaterThan(0.99)), () => {
         Break();
@@ -332,41 +373,11 @@ export function createBlackHoleShader(uniforms) {
       });
 
       // === ADAPTIVE STEP SIZE ===
-      // Factor 1: Distance from event horizon
+      // Reduce step size near event horizon for accurate bending
       const distFromHorizon = r.sub(rs);
       const horizonFactor = smoothstep(float(0.0), rs.mul(5.0), distFromHorizon)
         .mul(0.8).add(0.2);
-
-      // Factor 2 & 3: Disk proximity with thickness awareness
-      const rHoriz = sqrt(rayPos.x.mul(rayPos.x).add(rayPos.z.mul(rayPos.z)));
-
-      const diskMargin = float(2.0);
-      const inDiskRegion = smoothstep(innerR.sub(diskMargin.mul(2.0)), innerR.sub(diskMargin), rHoriz)
-        .mul(smoothstep(outerR.add(diskMargin.mul(2.0)), outerR.add(diskMargin), rHoriz));
-
-      // Calculate local disk thickness at this radius
-      const normRForThickness = clamp(
-        rHoriz.sub(innerR).div(outerR.sub(innerR)),
-        float(0.0), float(1.0)
-      );
-      const localThickness = mix(
-        uniforms.diskInnerThickness,
-        uniforms.diskOuterThickness,
-        normRForThickness
-      );
-
-      // Reduce step size near disk plane
-      const approachDistance = float(3.0);
-      const distToPlane = abs(rayPos.y);
-      const thicknessScale = localThickness.max(0.05);
-      const diskProximity = distToPlane.div(thicknessScale.mul(approachDistance));
-      const minStep = uniforms.adaptiveMinStep;
-      const diskFactor = smoothstep(float(0.0), float(1.0), diskProximity)
-        .mul(float(1.0).sub(minStep)).add(minStep);
-
-      // Combine factors
-      const combinedDiskFactor = mix(float(1.0), diskFactor, inDiskRegion);
-      const adaptiveStep = uniforms.stepSize.mul(horizonFactor).mul(combinedDiskFactor);
+      const adaptiveStep = uniforms.stepSize.mul(horizonFactor);
 
       // === GRAVITATIONAL LIGHT BENDING ===
       const toCenter = rayPos.negate().normalize();
@@ -376,64 +387,53 @@ export function createBlackHoleShader(uniforms) {
       rayDir.addAssign(toCenter.mul(bendStrength));
       rayDir.assign(normalize(rayDir));
 
+      // Save previous position before stepping
+      prevPos.assign(rayPos);
+
       // Step ray forward
       rayPos.addAssign(rayDir.mul(adaptiveStep));
 
-      // === VOLUMETRIC DISK SAMPLING ===
-      const sampleNoise = hash33(rayPos.add(vec3(uniforms.frameIndex.mul(0.1))));
-      const jitterOffset = sampleNoise.sub(0.5).mul(adaptiveStep).mul(uniforms.stepJitter);
-      const samplePos = rayPos.add(jitterOffset);
+      // === ANALYTIC DISK PLANE INTERSECTION ===
+      // Detect when ray crosses the disk plane (Y = 0)
+      const crossedPlane = prevPos.y.mul(rayPos.y).lessThan(0.0);
 
-      // Check if ray is inside the disk volume
-      const hitR = sqrt(samplePos.x.mul(samplePos.x).add(samplePos.z.mul(samplePos.z)));
+      If(crossedPlane.and(alpha.lessThan(0.99)), () => {
+        // Compute exact intersection point using linear interpolation
+        // t = -prevPos.y / (rayPos.y - prevPos.y)
+        const t = prevPos.y.negate().div(rayPos.y.sub(prevPos.y));
+        const hitPos = mix(prevPos, rayPos, t);
 
-      // Normalized radius for tapering
-      const normR = clamp(hitR.sub(innerR).div(outerR.sub(innerR)), float(0.0), float(1.0));
+        // Radial distance from center at hit point
+        const hitR = sqrt(hitPos.x.mul(hitPos.x).add(hitPos.z.mul(hitPos.z)));
 
-      // === SOFT RADIAL FALLOFF ===
-      const radialFalloffWidth = uniforms.diskRadialFalloff;
-      const innerFalloff = smoothstep(
-        innerR.sub(radialFalloffWidth),
-        innerR.add(radialFalloffWidth),
-        hitR
-      );
-      const outerFalloff = smoothstep(
-        outerR.add(radialFalloffWidth),
-        outerR.sub(radialFalloffWidth),
-        hitR
-      );
-      const radialDensity = innerFalloff.mul(outerFalloff);
+        // Check if hit is within disk bounds
+        const inDisk = hitR.greaterThan(innerR).and(hitR.lessThan(outerR));
 
-      // === DISK THICKNESS PROFILE ===
-      const innerHalf = uniforms.diskInnerThickness.mul(0.5);
-      const outerHalf = uniforms.diskOuterThickness.mul(0.5);
-      const localHalfThickness = mix(innerHalf, outerHalf, normR);
+        If(inDisk, () => {
+          const hitAngle = atan(hitPos.z, hitPos.x);
 
-      // === SOFT HEIGHT FALLOFF ===
-      const heightRatio = abs(samplePos.y).div(localHalfThickness.max(0.01));
-      const heightDensity = smoothstep(float(1.0), float(0.0), heightRatio);
+          // Get disk color and pattern
+          const diskResult = accretionDiskColor(hitR, hitAngle, uniforms.time);
+          const diskCol = diskResult.xyz;
+          const diskOpacity = diskResult.w;
 
-      // Combined density
-      const totalDensity = radialDensity.mul(heightDensity);
+          // === SOFT EDGE FALLOFF ===
+          const normR = hitR.sub(innerR).div(outerR.sub(innerR));
+          const edgeFalloff = smoothstep(float(0.0), float(0.1), normR)
+            .mul(smoothstep(float(1.0), float(0.9), normR));
 
-      // Only process if density is significant
-      If(totalDensity.greaterThan(0.001).and(alpha.lessThan(0.99)), () => {
-        const hitAngle = atan(samplePos.z, samplePos.x);
+          // === GRAVITATIONAL REDSHIFT ===
+          const redshift = sqrt(clamp(float(1.0).sub(rs.div(hitR)), float(0.1), float(1.0)));
 
-        // Get disk color and turbulence opacity
-        const diskResult = accretionDiskColor(hitR, hitAngle, uniforms.time);
-        const diskCol = diskResult.xyz;
-        const turbOpacity = diskResult.w;
+          // Compute final color contribution (diskBrightness already applied in accretionDiskColor)
+          const finalDiskColor = diskCol.mul(redshift);
+          const finalOpacity = diskOpacity.mul(edgeFalloff).mul(uniforms.diskDensity);
 
-        // === GRAVITATIONAL REDSHIFT ===
-        const redshift = sqrt(clamp(float(1.0).sub(rs.div(hitR)), float(0.1), float(1.0)));
-
-        // Volumetric accumulation
-        const sampleDensity = totalDensity.mul(uniforms.diskDensity).mul(turbOpacity);
-        const contribution = diskCol.mul(redshift).mul(sampleDensity);
-        const remainingAlpha = float(1.0).sub(alpha);
-        color.addAssign(contribution.mul(remainingAlpha));
-        alpha.addAssign(remainingAlpha.mul(sampleDensity.mul(uniforms.diskOpacityFalloff)));
+          // Alpha blending (front-to-back compositing)
+          const remainingAlpha = float(1.0).sub(alpha);
+          color.addAssign(finalDiskColor.mul(finalOpacity).mul(remainingAlpha));
+          alpha.addAssign(remainingAlpha.mul(finalOpacity));
+        });
       });
     });
 
