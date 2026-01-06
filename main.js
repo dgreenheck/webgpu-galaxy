@@ -23,8 +23,8 @@ const COLOR_PROPERTIES = [
   'diskInnerColor',
   'diskOuterColor',
   'starBackgroundColor',
-  'nebulaColor1',
-  'nebulaColor2'
+  'nebula1Color',
+  'nebula2Color'
 ];
 
 /**
@@ -158,16 +158,18 @@ const defaultConfig = {
   starSize: 2.0,
   starBrightness: 1.0,
 
-  // Nebula
+  // Nebula Layer 1
   nebulaEnabled: false,
-  nebulaBrightness: 0.15,
-  nebulaColor1: '#1a0033',
-  nebulaColor2: '#4d1a26',
-  nebulaScale1: 2.0,
-  nebulaScale2: 6.0,
-  nebulaBlend: 0.3,
-  nebulaSpeed: 0.01,
-  nebulaDensity: 0.5,
+  nebula1Scale: 2.0,
+  nebula1Density: 0.5,
+  nebula1Brightness: 0.15,
+  nebula1Color: '#1a0033',
+
+  // Nebula Layer 2
+  nebula2Scale: 6.0,
+  nebula2Density: 0.5,
+  nebula2Brightness: 0.15,
+  nebula2Color: '#4d1a26',
 
   // Bloom post-processing
   bloomStrength: 0.8,

@@ -528,82 +528,82 @@ export class BlackHoleUI {
       this.callbacks.onUniformChange('nebulaEnabled', this.config.nebulaEnabled);
     });
 
-    nebulaFolder.addBinding(this.config, 'nebulaBrightness', {
-      min: 0.0,
-      max: 1.0,
-      step: 0.01,
-      label: 'Brightness'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('nebulaBrightness', this.config.nebulaBrightness);
+    // Layer 1 subfolder
+    const layer1Folder = nebulaFolder.addFolder({
+      title: 'Layer 1',
+      expanded: false
     });
 
-    nebulaFolder.addBinding(this.config, 'nebulaDensity', {
+    layer1Folder.addBinding(this.config, 'nebula1Scale', {
+      min: 0.5,
+      max: 10.0,
+      step: 0.5,
+      label: 'Scale'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebula1Scale', this.config.nebula1Scale);
+    });
+
+    layer1Folder.addBinding(this.config, 'nebula1Density', {
       min: -1.0,
       max: 1.0,
       step: 0.05,
       label: 'Density'
     }).on('change', () => {
-      this.callbacks.onUniformChange('nebulaDensity', this.config.nebulaDensity);
+      this.callbacks.onUniformChange('nebula1Density', this.config.nebula1Density);
     });
 
-    nebulaFolder.addBinding(this.config, 'nebulaSpeed', {
+    layer1Folder.addBinding(this.config, 'nebula1Brightness', {
       min: 0.0,
-      max: 0.1,
-      step: 0.005,
-      label: 'Animation Speed'
+      max: 1.0,
+      step: 0.01,
+      label: 'Brightness'
     }).on('change', () => {
-      this.callbacks.onUniformChange('nebulaSpeed', this.config.nebulaSpeed);
+      this.callbacks.onUniformChange('nebula1Brightness', this.config.nebula1Brightness);
     });
 
-    // Layers subfolder
-    const layersFolder = nebulaFolder.addFolder({
-      title: 'Layers',
+    layer1Folder.addBinding(this.config, 'nebula1Color', {
+      label: 'Color'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebula1Color', this.config.nebula1Color);
+    });
+
+    // Layer 2 subfolder
+    const layer2Folder = nebulaFolder.addFolder({
+      title: 'Layer 2',
       expanded: false
     });
 
-    layersFolder.addBinding(this.config, 'nebulaScale1', {
-      min: 0.5,
-      max: 10.0,
-      step: 0.5,
-      label: 'Layer 1 Scale'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('nebulaScale1', this.config.nebulaScale1);
-    });
-
-    layersFolder.addBinding(this.config, 'nebulaScale2', {
+    layer2Folder.addBinding(this.config, 'nebula2Scale', {
       min: 0.5,
       max: 20.0,
       step: 0.5,
-      label: 'Layer 2 Scale'
+      label: 'Scale'
     }).on('change', () => {
-      this.callbacks.onUniformChange('nebulaScale2', this.config.nebulaScale2);
+      this.callbacks.onUniformChange('nebula2Scale', this.config.nebula2Scale);
     });
 
-    layersFolder.addBinding(this.config, 'nebulaBlend', {
-      min: 0.0,
+    layer2Folder.addBinding(this.config, 'nebula2Density', {
+      min: -1.0,
       max: 1.0,
       step: 0.05,
-      label: 'Layer 2 Blend'
+      label: 'Density'
     }).on('change', () => {
-      this.callbacks.onUniformChange('nebulaBlend', this.config.nebulaBlend);
+      this.callbacks.onUniformChange('nebula2Density', this.config.nebula2Density);
     });
 
-    // Colors subfolder
-    const colorFolder = nebulaFolder.addFolder({
-      title: 'Colors',
-      expanded: false
+    layer2Folder.addBinding(this.config, 'nebula2Brightness', {
+      min: 0.0,
+      max: 1.0,
+      step: 0.01,
+      label: 'Brightness'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebula2Brightness', this.config.nebula2Brightness);
     });
 
-    colorFolder.addBinding(this.config, 'nebulaColor1', {
-      label: 'Color 1'
+    layer2Folder.addBinding(this.config, 'nebula2Color', {
+      label: 'Color'
     }).on('change', () => {
-      this.callbacks.onUniformChange('nebulaColor1', this.config.nebulaColor1);
-    });
-
-    colorFolder.addBinding(this.config, 'nebulaColor2', {
-      label: 'Color 2'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('nebulaColor2', this.config.nebulaColor2);
+      this.callbacks.onUniformChange('nebula2Color', this.config.nebula2Color);
     });
   }
 

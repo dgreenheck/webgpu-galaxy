@@ -169,27 +169,23 @@ const createStarField = (uniforms) => Fn(([rayDir]) => {
 
 /**
  * Generate procedural nebula clouds.
- * Uses two noise layers at different frequencies for depth.
+ * Two independent layers added together, each with its own controls.
  */
-const createNebulaField = (uniforms) => Fn(([rayDir, time]) => {
-  // Layer 1: Large scale structures
-  const noisePos1 = rayDir.mul(uniforms.nebulaScale1);
-  const n1 = fbm(noisePos1.add(time.mul(uniforms.nebulaSpeed))).mul(2.0).sub(1.0);
+const createNebulaField = (uniforms) => Fn(([rayDir]) => {
+  // Layer 1
+  const noisePos1 = rayDir.mul(uniforms.nebula1Scale);
+  const n1 = fbm(noisePos1).mul(2.0).sub(1.0);
+  const layer1 = clamp(n1.add(uniforms.nebula1Density), float(0.0), float(1.0));
+  const color1 = uniforms.nebula1Color.mul(layer1).mul(uniforms.nebula1Brightness);
 
-  // Layer 2: Higher frequency detail
-  const noisePos2 = rayDir.mul(uniforms.nebulaScale2);
-  const n2 = fbm(noisePos2.sub(time.mul(uniforms.nebulaSpeed.mul(0.5)))).mul(2.0).sub(1.0);
+  // Layer 2
+  const noisePos2 = rayDir.mul(uniforms.nebula2Scale);
+  const n2 = fbm(noisePos2).mul(2.0).sub(1.0);
+  const layer2 = clamp(n2.add(uniforms.nebula2Density), float(0.0), float(1.0));
+  const color2 = uniforms.nebula2Color.mul(layer2).mul(uniforms.nebula2Brightness);
 
-  // Combine layers - blend controls mix, density offsets for visibility threshold
-  const layer1Weight = float(1.0).sub(uniforms.nebulaBlend);
-  const combined = n1.mul(layer1Weight).add(n2.mul(uniforms.nebulaBlend)).add(uniforms.nebulaDensity);
-  const nebula = clamp(combined, float(0.0), float(1.0));
-
-  // Color gradient based on first noise layer
-  const colorMix = n1.mul(0.5).add(0.5);
-  const nebulaColor = mix(uniforms.nebulaColor1, uniforms.nebulaColor2, colorMix);
-
-  return nebulaColor.mul(nebula).mul(uniforms.nebulaBrightness);
+  // Add layers together
+  return color1.add(color2);
 });
 
 // ============================================================================
@@ -458,7 +454,7 @@ export function createBlackHoleShader(uniforms) {
 
       // Add nebula if enabled
       If(uniforms.nebulaEnabled.greaterThan(0.5), () => {
-        const nebula = nebulaField(rayDir, uniforms.time);
+        const nebula = nebulaField(rayDir);
         bgColor.addAssign(nebula);
       });
 

@@ -129,16 +129,18 @@ export class BlackHoleSimulation {
       starSize: uniform(config.starSize ?? 2.0),
       starBrightness: uniform(config.starBrightness ?? 1.0),
 
-      // === Nebula ===
+      // === Nebula Layer 1 ===
       nebulaEnabled: uniform(config.nebulaEnabled ? 1.0 : 0.0),
-      nebulaBrightness: uniform(config.nebulaBrightness ?? 0.15),
-      nebulaColor1: uniform(new THREE.Color(config.nebulaColor1 ?? '#1a0033')),
-      nebulaColor2: uniform(new THREE.Color(config.nebulaColor2 ?? '#4d1a26')),
-      nebulaScale1: uniform(config.nebulaScale1 ?? 2.0),
-      nebulaScale2: uniform(config.nebulaScale2 ?? 6.0),
-      nebulaBlend: uniform(config.nebulaBlend ?? 0.3),
-      nebulaSpeed: uniform(config.nebulaSpeed ?? 0.01),
-      nebulaDensity: uniform(config.nebulaDensity ?? 0.5),
+      nebula1Scale: uniform(config.nebula1Scale ?? 2.0),
+      nebula1Density: uniform(config.nebula1Density ?? 0.5),
+      nebula1Brightness: uniform(config.nebula1Brightness ?? 0.15),
+      nebula1Color: uniform(new THREE.Color(config.nebula1Color ?? '#1a0033')),
+
+      // === Nebula Layer 2 ===
+      nebula2Scale: uniform(config.nebula2Scale ?? 6.0),
+      nebula2Density: uniform(config.nebula2Density ?? 0.5),
+      nebula2Brightness: uniform(config.nebula2Brightness ?? 0.15),
+      nebula2Color: uniform(new THREE.Color(config.nebula2Color ?? '#4d1a26')),
 
       // === Animation State ===
       time: uniform(0),
@@ -245,14 +247,18 @@ export class BlackHoleSimulation {
     if (config.starSize !== undefined) u.starSize.value = config.starSize;
     if (config.starBrightness !== undefined) u.starBrightness.value = config.starBrightness;
 
-    // Nebula uniforms
+    // Nebula Layer 1 uniforms
     if (config.nebulaEnabled !== undefined) u.nebulaEnabled.value = config.nebulaEnabled ? 1.0 : 0.0;
-    if (config.nebulaBrightness !== undefined) u.nebulaBrightness.value = config.nebulaBrightness;
-    if (config.nebulaScale1 !== undefined) u.nebulaScale1.value = config.nebulaScale1;
-    if (config.nebulaScale2 !== undefined) u.nebulaScale2.value = config.nebulaScale2;
-    if (config.nebulaBlend !== undefined) u.nebulaBlend.value = config.nebulaBlend;
-    if (config.nebulaSpeed !== undefined) u.nebulaSpeed.value = config.nebulaSpeed;
-    if (config.nebulaDensity !== undefined) u.nebulaDensity.value = config.nebulaDensity;
+    if (config.nebula1Scale !== undefined) u.nebula1Scale.value = config.nebula1Scale;
+    if (config.nebula1Density !== undefined) u.nebula1Density.value = config.nebula1Density;
+    if (config.nebula1Brightness !== undefined) u.nebula1Brightness.value = config.nebula1Brightness;
+    if (config.nebula1Color !== undefined) u.nebula1Color.value.set(config.nebula1Color);
+
+    // Nebula Layer 2 uniforms
+    if (config.nebula2Scale !== undefined) u.nebula2Scale.value = config.nebula2Scale;
+    if (config.nebula2Density !== undefined) u.nebula2Density.value = config.nebula2Density;
+    if (config.nebula2Brightness !== undefined) u.nebula2Brightness.value = config.nebula2Brightness;
+    if (config.nebula2Color !== undefined) u.nebula2Color.value.set(config.nebula2Color);
 
     // Color uniforms
     if (config.diskInnerColor !== undefined) {
@@ -260,12 +266,6 @@ export class BlackHoleSimulation {
     }
     if (config.diskOuterColor !== undefined) {
       u.diskOuterColor.value.set(config.diskOuterColor);
-    }
-    if (config.nebulaColor1 !== undefined) {
-      u.nebulaColor1.value.set(config.nebulaColor1);
-    }
-    if (config.nebulaColor2 !== undefined) {
-      u.nebulaColor2.value.set(config.nebulaColor2);
     }
   }
 
