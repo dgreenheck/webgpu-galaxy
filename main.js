@@ -13,48 +13,130 @@ import { BlackHoleSimulation } from './blackhole.js';
 import { BlackHoleUI } from './ui.js';
 
 // ============================================================================
+// LOCAL STORAGE
+// ============================================================================
+
+const STORAGE_KEY = 'blackhole-simulation-config';
+
+/**
+ * Load configuration from localStorage, merging with defaults.
+ */
+function loadConfig(defaults) {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Merge saved values with defaults (defaults provide any missing keys)
+      return { ...defaults, ...parsed };
+    }
+  } catch (e) {
+    console.warn('Failed to load config from localStorage:', e);
+  }
+  return defaults;
+}
+
+/**
+ * Save current configuration to localStorage.
+ */
+function saveConfig(config) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    console.log('Configuration saved to localStorage');
+  } catch (e) {
+    console.warn('Failed to save config to localStorage:', e);
+  }
+}
+
+/**
+ * Clear configuration from localStorage.
+ */
+function clearConfig() {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    console.log('Configuration cleared from localStorage');
+  } catch (e) {
+    console.warn('Failed to clear config from localStorage:', e);
+  }
+}
+
+// ============================================================================
 // CONFIGURATION
 // ============================================================================
 
-const config = {
+const defaultConfig = {
   // Black hole physics
   blackHoleMass: 1.0,
 
   // Accretion disk geometry
   diskInnerRadius: 3.0,
   diskOuterRadius: 12.0,
+  diskInnerThickness: 0.1,
+  diskOuterThickness: 0.8,
 
   // Accretion disk appearance
   diskTemperature: 1.5,
   diskBrightness: 2.0,
-  diskTurbulence: 0.5,
-  diskRingCount: 8,
   diskRotationSpeed: 0.3,
+
+  // Ring pattern
+  ringEnabled: true,
+  ringScale: 1.0,
+  ringContrast: 1.5,
+  ringBrightness: 0.3,
+  ringSharpness: 1.0,
+  ringTwist: 0.5,
+  diskDifferentialRotation: 0.8,
+
+  // Disk edge falloff
+  diskEdgeSoftnessInner: 0.15,
+  diskEdgeSoftnessOuter: 0.15,
+  diskRadialFalloff: 0.5,
 
   // Disk colors (user configurable)
   diskInnerColor: '#ffffee',
   diskOuterColor: '#ff4400',
 
   // Relativistic effects
-  dopplerStrength: 0.8,
-  photonRingIntensity: 1.0,
+  gravitationalLensing: 1.5,
+
+  // Volumetric rendering
+  diskDensity: 0.25,
+  diskOpacityFalloff: 0.8,
 
   // Performance
   qualityPreset: 'medium',
   raySteps: 100,
   stepSize: 0.3,
+  adaptiveMinStep: 0.15,
+  stepJitter: 0.25,
 
-  // Background
+  // Stars
   starsEnabled: true,
   starDensity: 0.003,
+  starSize: 2.0,
+  starBrightness: 1.0,
+
+  // Nebula
   nebulaEnabled: false,
   nebulaBrightness: 0.15,
+  nebulaColor1: '#1a0033',
+  nebulaColor2: '#4d1a26',
+  nebulaScale: 2.0,
+  nebulaDetailScale: 2.0,
+  nebulaSpeed: 0.01,
+  nebulaDensity: 2.0,
+  nebulaOffsetX: 0.0,
+  nebulaOffsetY: 0.0,
+  nebulaOffsetZ: 0.0,
 
   // Bloom post-processing
   bloomStrength: 0.8,
   bloomRadius: 0.5,
   bloomThreshold: 0.2
 };
+
+// Load config from localStorage (merges with defaults)
+const config = loadConfig(defaultConfig);
 
 // ============================================================================
 // SCENE SETUP
@@ -142,6 +224,28 @@ const ui = new BlackHoleUI(config, {
   onRegenerate: () => {
     blackHoleSimulation.updateUniforms(config);
     blackHoleSimulation.regenerate();
+  },
+
+  // Save current config to localStorage
+  onSaveConfig: () => {
+    saveConfig(config);
+  },
+
+  // Clear localStorage and reload with defaults
+  onClearConfig: () => {
+    clearConfig();
+    window.location.reload();
+  },
+
+  // Reset to defaults without clearing localStorage
+  onResetToDefaults: () => {
+    Object.assign(config, defaultConfig);
+    blackHoleSimulation.updateUniforms(config);
+    if (bloomPassNode) {
+      bloomPassNode.threshold.value = config.bloomThreshold;
+      bloomPassNode.strength.value = config.bloomStrength;
+      bloomPassNode.radius.value = config.bloomRadius;
+    }
   }
 });
 

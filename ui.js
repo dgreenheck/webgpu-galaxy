@@ -20,13 +20,90 @@ export class BlackHoleUI {
   }
 
   setupUI() {
+    this.setupConfigFolder();
     this.setupPerformanceFolder();
     this.setupBlackHoleFolder();
     this.setupAccretionDiskFolder();
     this.setupDiskColorFolder();
     this.setupEffectsFolder();
-    this.setupBackgroundFolder();
+    this.setupStarsFolder();
+    this.setupNebulaFolder();
     this.setupBloomFolder();
+  }
+
+  // ==========================================================================
+  // CONFIGURATION MANAGEMENT
+  // ==========================================================================
+
+  setupConfigFolder() {
+    const configFolder = this.pane.addFolder({
+      title: 'Save/Load',
+      expanded: true
+    });
+
+    // Button params (Tweakpane buttons need a dummy object)
+    const buttonParams = {
+      save: () => {
+        this.callbacks.onSaveConfig?.();
+        this.showNotification('Settings saved!');
+      },
+      clear: () => {
+        if (confirm('Clear saved settings and reload with defaults?')) {
+          this.callbacks.onClearConfig?.();
+        }
+      },
+      reset: () => {
+        if (confirm('Reset all settings to defaults?')) {
+          this.callbacks.onResetToDefaults?.();
+          this.pane.refresh();
+          this.showNotification('Reset to defaults');
+        }
+      }
+    };
+
+    configFolder.addButton({
+      title: 'Save Settings'
+    }).on('click', buttonParams.save);
+
+    configFolder.addButton({
+      title: 'Clear & Reload'
+    }).on('click', buttonParams.clear);
+
+    configFolder.addButton({
+      title: 'Reset to Defaults'
+    }).on('click', buttonParams.reset);
+  }
+
+  /**
+   * Show a temporary notification message.
+   */
+  showNotification(message) {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.textContent = message;
+    notification.style.cssText = `
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.8);
+      color: #0f0;
+      padding: 12px 24px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 14px;
+      z-index: 10000;
+      pointer-events: none;
+      opacity: 1;
+      transition: opacity 0.3s ease;
+    `;
+    document.body.appendChild(notification);
+
+    // Fade out and remove
+    setTimeout(() => {
+      notification.style.opacity = '0';
+      setTimeout(() => notification.remove(), 300);
+    }, 1500);
   }
 
   // ==========================================================================
@@ -62,9 +139,9 @@ export class BlackHoleUI {
     });
 
     advancedFolder.addBinding(this.config, 'raySteps', {
-      min: 32,
+      min: 64,
       max: 512,
-      step: 16,
+      step: 32,
       label: 'Ray Steps'
     }).on('change', () => {
       this.callbacks.onUniformChange('raySteps', this.config.raySteps);
@@ -72,12 +149,31 @@ export class BlackHoleUI {
 
     advancedFolder.addBinding(this.config, 'stepSize', {
       min: 0.1,
-      max: 0.5,
+      max: 1,
       step: 0.05,
       label: 'Step Size'
     }).on('change', () => {
       this.callbacks.onUniformChange('stepSize', this.config.stepSize);
     });
+
+    advancedFolder.addBinding(this.config, 'adaptiveMinStep', {
+      min: 0.05,
+      max: 0.5,
+      step: 0.05,
+      label: 'Min Step Factor'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('adaptiveMinStep', this.config.adaptiveMinStep);
+    });
+
+    advancedFolder.addBinding(this.config, 'stepJitter', {
+      min: 0,
+      max: 1.0,
+      step: 0.05,
+      label: 'Sample Jitter'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('stepJitter', this.config.stepJitter);
+    });
+
   }
 
   applyQualityPreset(presetName) {
@@ -89,6 +185,8 @@ export class BlackHoleUI {
     this.config.stepSize = preset.stepSize;
     this.config.starsEnabled = preset.starsEnabled;
     this.config.nebulaEnabled = preset.nebulaEnabled;
+    this.config.rayJitter = preset.rayJitter ?? 1.0;
+    this.config.stepJitter = preset.stepJitter ?? 0.25;
 
     // Apply to simulation
     this.callbacks.onQualityPreset(presetName);
@@ -121,7 +219,13 @@ export class BlackHoleUI {
   setupAccretionDiskFolder() {
     const diskFolder = this.pane.addFolder({ title: 'Accretion Disk' });
 
-    diskFolder.addBinding(this.config, 'diskInnerRadius', {
+    // === Geometry ===
+    const geometryFolder = diskFolder.addFolder({
+      title: 'Geometry',
+      expanded: false
+    });
+
+    geometryFolder.addBinding(this.config, 'diskInnerRadius', {
       min: 2.0,
       max: 5.0,
       step: 0.1,
@@ -130,7 +234,7 @@ export class BlackHoleUI {
       this.callbacks.onUniformChange('diskInnerRadius', this.config.diskInnerRadius);
     });
 
-    diskFolder.addBinding(this.config, 'diskOuterRadius', {
+    geometryFolder.addBinding(this.config, 'diskOuterRadius', {
       min: 6.0,
       max: 20.0,
       step: 0.5,
@@ -139,7 +243,31 @@ export class BlackHoleUI {
       this.callbacks.onUniformChange('diskOuterRadius', this.config.diskOuterRadius);
     });
 
-    diskFolder.addBinding(this.config, 'diskBrightness', {
+    geometryFolder.addBinding(this.config, 'diskInnerThickness', {
+      min: 0.05,
+      max: 1.0,
+      step: 0.05,
+      label: 'Inner Thickness'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('diskInnerThickness', this.config.diskInnerThickness);
+    });
+
+    geometryFolder.addBinding(this.config, 'diskOuterThickness', {
+      min: 0.1,
+      max: 2.0,
+      step: 0.05,
+      label: 'Outer Thickness'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('diskOuterThickness', this.config.diskOuterThickness);
+    });
+
+    // === Appearance ===
+    const appearanceFolder = diskFolder.addFolder({
+      title: 'Appearance',
+      expanded: true
+    });
+
+    appearanceFolder.addBinding(this.config, 'diskBrightness', {
       min: 0.5,
       max: 5.0,
       step: 0.1,
@@ -148,31 +276,145 @@ export class BlackHoleUI {
       this.callbacks.onUniformChange('diskBrightness', this.config.diskBrightness);
     });
 
-    diskFolder.addBinding(this.config, 'diskRingCount', {
-      min: 2,
-      max: 20,
-      step: 1,
-      label: 'Ring Count'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('diskRingCount', this.config.diskRingCount);
-    });
-
-    diskFolder.addBinding(this.config, 'diskTurbulence', {
-      min: 0.0,
-      max: 1.0,
-      step: 0.05,
-      label: 'Turbulence'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('diskTurbulence', this.config.diskTurbulence);
-    });
-
-    diskFolder.addBinding(this.config, 'diskTemperature', {
-      min: 0.5,
-      max: 3.0,
-      step: 0.1,
+    appearanceFolder.addBinding(this.config, 'diskTemperature', {
+      min: 0.1,
+      max: 2.0,
+      step: 0.01,
       label: 'Temperature'
     }).on('change', () => {
       this.callbacks.onUniformChange('diskTemperature', this.config.diskTemperature);
+    });
+
+    appearanceFolder.addBinding(this.config, 'diskRotationSpeed', {
+      min: 0.0,
+      max: 5.0,
+      step: 0.05,
+      label: 'Rotation Speed'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('diskRotationSpeed', this.config.diskRotationSpeed);
+    });
+
+    // === Ring Pattern ===
+    const ringFolder = diskFolder.addFolder({
+      title: 'Ring Pattern',
+      expanded: true
+    });
+
+    ringFolder.addBinding(this.config, 'ringEnabled', {
+      label: 'Enable'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('ringEnabled', this.config.ringEnabled);
+    });
+
+    ringFolder.addBinding(this.config, 'ringScale', {
+      min: 0.5,
+      max: 10.0,
+      step: 0.1,
+      label: 'Scale'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('ringScale', this.config.ringScale);
+    });
+
+    ringFolder.addBinding(this.config, 'ringContrast', {
+      min: 0.0,
+      max: 2.0,
+      step: 0.05,
+      label: 'Contrast'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('ringContrast', this.config.ringContrast);
+    });
+
+    ringFolder.addBinding(this.config, 'ringBrightness', {
+      min: -1.0,
+      max: 2.0,
+      step: 0.05,
+      label: 'Brightness'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('ringBrightness', this.config.ringBrightness);
+    });
+
+    ringFolder.addBinding(this.config, 'ringSharpness', {
+      min: 0.1,
+      max: 5.0,
+      step: 0.1,
+      label: 'Sharpness'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('ringSharpness', this.config.ringSharpness);
+    });
+
+    ringFolder.addBinding(this.config, 'ringTwist', {
+      min: 0.0,
+      max: 5.0,
+      step: 0.1,
+      label: 'Twist'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('ringTwist', this.config.ringTwist);
+    });
+
+    ringFolder.addBinding(this.config, 'diskDifferentialRotation', {
+      min: 0.0,
+      max: 1.0,
+      step: 0.05,
+      label: 'Differential'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('diskDifferentialRotation', this.config.diskDifferentialRotation);
+    });
+
+    // === Edge Falloff Controls ===
+    const edgeFolder = diskFolder.addFolder({
+      title: 'Edge Falloff',
+      expanded: false
+    });
+
+    edgeFolder.addBinding(this.config, 'diskEdgeSoftnessInner', {
+      min: 0.0,
+      max: 0.5,
+      step: 0.01,
+      label: 'Inner Softness'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('diskEdgeSoftnessInner', this.config.diskEdgeSoftnessInner);
+    });
+
+    edgeFolder.addBinding(this.config, 'diskEdgeSoftnessOuter', {
+      min: 0.0,
+      max: 0.5,
+      step: 0.01,
+      label: 'Outer Softness'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('diskEdgeSoftnessOuter', this.config.diskEdgeSoftnessOuter);
+    });
+
+    edgeFolder.addBinding(this.config, 'diskRadialFalloff', {
+      min: 0.1,
+      max: 2.0,
+      step: 0.1,
+      label: 'Radial Falloff'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('diskRadialFalloff', this.config.diskRadialFalloff);
+    });
+
+    // === Volumetric Rendering ===
+    const volFolder = diskFolder.addFolder({
+      title: 'Volumetric',
+      expanded: false
+    });
+
+    volFolder.addBinding(this.config, 'diskDensity', {
+      min: 0.05,
+      max: 1,
+      step: 0.01,
+      label: 'Density'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('diskDensity', this.config.diskDensity);
+    });
+
+    volFolder.addBinding(this.config, 'diskOpacityFalloff', {
+      min: 0.3,
+      max: 1.0,
+      step: 0.05,
+      label: 'Opacity Falloff'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('diskOpacityFalloff', this.config.diskOpacityFalloff);
     });
   }
 
@@ -206,63 +448,170 @@ export class BlackHoleUI {
   setupEffectsFolder() {
     const effectsFolder = this.pane.addFolder({ title: 'Relativistic Effects' });
 
-    effectsFolder.addBinding(this.config, 'dopplerStrength', {
-      min: 0.0,
-      max: 2.0,
+    effectsFolder.addBinding(this.config, 'gravitationalLensing', {
+      min: 0.5,
+      max: 3.0,
       step: 0.1,
-      label: 'Doppler Beaming'
+      label: 'Grav. Lensing'
     }).on('change', () => {
-      this.callbacks.onUniformChange('dopplerStrength', this.config.dopplerStrength);
-    });
-
-    effectsFolder.addBinding(this.config, 'photonRingIntensity', {
-      min: 0.0,
-      max: 2.0,
-      step: 0.1,
-      label: 'Photon Ring'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('photonRingIntensity', this.config.photonRingIntensity);
+      this.callbacks.onUniformChange('gravitationalLensing', this.config.gravitationalLensing);
     });
   }
 
   // ==========================================================================
-  // BACKGROUND (STARS & NEBULA)
+  // STARS
   // ==========================================================================
 
-  setupBackgroundFolder() {
-    const bgFolder = this.pane.addFolder({
-      title: 'Background',
+  setupStarsFolder() {
+    const starsFolder = this.pane.addFolder({
+      title: 'Stars',
       expanded: false
     });
 
-    bgFolder.addBinding(this.config, 'starsEnabled', {
+    starsFolder.addBinding(this.config, 'starsEnabled', {
       label: 'Enable Stars'
     }).on('change', () => {
       this.callbacks.onUniformChange('starsEnabled', this.config.starsEnabled);
     });
 
-    bgFolder.addBinding(this.config, 'starDensity', {
+    starsFolder.addBinding(this.config, 'starDensity', {
       min: 0.001,
-      max: 0.01,
+      max: 0.02,
       step: 0.001,
-      label: 'Star Density'
+      label: 'Density'
     }).on('change', () => {
       this.callbacks.onUniformChange('starDensity', this.config.starDensity);
     });
 
-    bgFolder.addBinding(this.config, 'nebulaEnabled', {
+    starsFolder.addBinding(this.config, 'starSize', {
+      min: 0.5,
+      max: 5.0,
+      step: 0.1,
+      label: 'Size'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('starSize', this.config.starSize);
+    });
+
+    starsFolder.addBinding(this.config, 'starBrightness', {
+      min: 0.1,
+      max: 3.0,
+      step: 0.1,
+      label: 'Brightness'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('starBrightness', this.config.starBrightness);
+    });
+  }
+
+  // ==========================================================================
+  // NEBULA
+  // ==========================================================================
+
+  setupNebulaFolder() {
+    const nebulaFolder = this.pane.addFolder({
+      title: 'Nebula',
+      expanded: false
+    });
+
+    nebulaFolder.addBinding(this.config, 'nebulaEnabled', {
       label: 'Enable Nebula'
     }).on('change', () => {
       this.callbacks.onUniformChange('nebulaEnabled', this.config.nebulaEnabled);
     });
 
-    bgFolder.addBinding(this.config, 'nebulaBrightness', {
+    nebulaFolder.addBinding(this.config, 'nebulaBrightness', {
       min: 0.0,
-      max: 0.5,
+      max: 1.0,
       step: 0.05,
-      label: 'Nebula Brightness'
+      label: 'Brightness'
     }).on('change', () => {
       this.callbacks.onUniformChange('nebulaBrightness', this.config.nebulaBrightness);
+    });
+
+    nebulaFolder.addBinding(this.config, 'nebulaDensity', {
+      min: 0.5,
+      max: 5.0,
+      step: 0.1,
+      label: 'Density'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebulaDensity', this.config.nebulaDensity);
+    });
+
+    nebulaFolder.addBinding(this.config, 'nebulaScale', {
+      min: 0.5,
+      max: 10.0,
+      step: 0.5,
+      label: 'Scale'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebulaScale', this.config.nebulaScale);
+    });
+
+    nebulaFolder.addBinding(this.config, 'nebulaDetailScale', {
+      min: 0.5,
+      max: 5.0,
+      step: 0.1,
+      label: 'Detail Scale'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebulaDetailScale', this.config.nebulaDetailScale);
+    });
+
+    nebulaFolder.addBinding(this.config, 'nebulaSpeed', {
+      min: 0.0,
+      max: 0.1,
+      step: 0.005,
+      label: 'Animation Speed'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebulaSpeed', this.config.nebulaSpeed);
+    });
+
+    // Colors subfolder
+    const colorFolder = nebulaFolder.addFolder({
+      title: 'Colors',
+      expanded: false
+    });
+
+    colorFolder.addBinding(this.config, 'nebulaColor1', {
+      label: 'Color 1'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebulaColor1', this.config.nebulaColor1);
+    });
+
+    colorFolder.addBinding(this.config, 'nebulaColor2', {
+      label: 'Color 2'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebulaColor2', this.config.nebulaColor2);
+    });
+
+    // Offset subfolder for positioning
+    const offsetFolder = nebulaFolder.addFolder({
+      title: 'Position Offset',
+      expanded: false
+    });
+
+    offsetFolder.addBinding(this.config, 'nebulaOffsetX', {
+      min: -10.0,
+      max: 10.0,
+      step: 0.5,
+      label: 'X'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebulaOffsetX', this.config.nebulaOffsetX);
+    });
+
+    offsetFolder.addBinding(this.config, 'nebulaOffsetY', {
+      min: -10.0,
+      max: 10.0,
+      step: 0.5,
+      label: 'Y'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebulaOffsetY', this.config.nebulaOffsetY);
+    });
+
+    offsetFolder.addBinding(this.config, 'nebulaOffsetZ', {
+      min: -10.0,
+      max: 10.0,
+      step: 0.5,
+      label: 'Z'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebulaOffsetZ', this.config.nebulaOffsetZ);
     });
   }
 

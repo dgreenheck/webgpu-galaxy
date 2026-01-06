@@ -156,8 +156,39 @@ rayDir.addAssign(toCenter.mul(bendStrength));
 rayDir.assign(normalize(rayDir));
 ```
 
-**Adaptive Step Size:**
-We use smaller steps near the black hole for accuracy, larger steps far away for performance:
+### 3.3 First Attempt: Fixed Step Size
+
+Let's start with the simplest raymarching implementation - a fixed step size:
+
+```javascript
+const stepSize = 0.3;
+
+Loop(256, () => {
+    // Bend ray
+    const toCenter = rayPos.negate().normalize();
+    const bendStrength = rs.div(r.mul(r)).mul(stepSize).mul(1.5);
+    rayDir.addAssign(toCenter.mul(bendStrength));
+    rayDir.assign(normalize(rayDir));
+
+    // Step forward
+    rayPos.addAssign(rayDir.mul(stepSize));
+
+    // Sample disk...
+});
+```
+
+This works! We get a black hole with gravitational lensing and an accretion disk. But look closely at the inner regions of the disk:
+
+**The Problem:** The inner disk is thin (we're simulating a realistic disk that gets thinner toward the center). With a fixed step size of 0.3 units, rays can skip right over the thinnest parts. This causes:
+- Missing portions of the inner disk
+- Aliased, jaggy edges
+- Inconsistent brightness
+
+The issue is fundamental: our step size is larger than the geometry we're trying to sample.
+
+### 3.4 First Fix: Adaptive Stepping Near the Black Hole
+
+Our first instinct might be to use smaller steps everywhere, but that's expensive. Instead, we can adapt the step size based on distance from the event horizon:
 
 ```javascript
 const distFromHorizon = r.sub(rs);
@@ -167,73 +198,210 @@ const adaptiveStep = baseStepSize.mul(
 );
 ```
 
-### 3.3 Disk Intersection and Rendering
+This gives us:
+- Step size = 20% of base near the event horizon
+- Step size = 100% of base far from the black hole
+- Smooth interpolation between
 
-The accretion disk lies in the equatorial plane (y = 0). We detect crossings by checking for sign changes in the y-coordinate:
+Better! The geodesic integration near the photon sphere is now more accurate. But we still have a problem: the thin inner disk regions are still getting skipped because our step size is based on distance from the *black hole*, not distance from the *disk*.
+
+### 3.5 Second Fix: Disk-Aware Adaptive Stepping
+
+The insight is that we need smaller steps when approaching the disk plane, especially where the disk is thin. Here's our improved adaptive stepper:
 
 ```javascript
-const prevY = rayPos.y;
-// ... step ray forward ...
-const currY = rayPos.y;
+// Factor 1: Distance from event horizon (for geodesic accuracy)
+const distFromHorizon = r.sub(rs);
+const horizonFactor = smoothstep(float(0.0), rs.mul(5.0), distFromHorizon)
+    .mul(0.8).add(0.2);
 
-// Did we cross the plane?
-If(sign(prevY).notEqual(sign(currY)), () => {
-    // Interpolate exact crossing point
-    const t = abs(prevY).div(abs(prevY).add(abs(currY)));
-    const hitX = rayPos.x.sub(rayDir.x.mul(stepSize.mul(1.0 - t)));
-    const hitZ = rayPos.z.sub(rayDir.z.mul(stepSize.mul(1.0 - t)));
-    const hitR = sqrt(hitX.mul(hitX).add(hitZ.mul(hitZ)));
+// Factor 2 & 3: Disk proximity with thickness awareness
+// Calculate horizontal distance (radius in disk plane)
+const rHoriz = sqrt(rayPos.x.mul(rayPos.x).add(rayPos.z.mul(rayPos.z)));
 
-    // Check if within disk bounds
-    If(hitR.greaterThan(innerRadius).and(hitR.lessThan(outerRadius)), () => {
-        // Calculate disk color
-        const hitAngle = atan(hitZ, hitX);
-        const diskColor = accretionDiskColor(hitR, hitAngle, time);
-        color.addAssign(diskColor);
-    });
+// Check if we're within the disk's radial extent
+const inDiskRegion = rHoriz.greaterThan(innerR.sub(diskMargin))
+    .and(rHoriz.lessThan(outerR.add(diskMargin)));
+
+// Calculate local disk thickness at this radius
+// (inner disk is thinner than outer disk)
+const normRForThickness = clamp(
+    rHoriz.sub(innerR).div(outerR.sub(innerR)),
+    float(0.0), float(1.0)
+);
+const localThickness = mix(
+    diskInnerThickness,
+    diskOuterThickness,
+    normRForThickness
+);
+
+// When approaching the disk plane, reduce step size
+// Scale based on distance to plane vs local thickness
+const distToPlane = abs(rayPos.y);
+const thicknessScale = localThickness.max(0.05);
+const diskProximity = distToPlane.div(thicknessScale.mul(3.0));
+const diskFactor = smoothstep(float(0.0), float(1.0), diskProximity)
+    .mul(0.85).add(0.15);
+
+// Combine: horizon factor always applies, disk factor only in disk region
+const combinedDiskFactor = mix(float(1.0), diskFactor, step(float(0.5), inDiskRegion));
+const adaptiveStep = stepSize.mul(horizonFactor).mul(combinedDiskFactor);
+```
+
+Now our step size accounts for:
+1. **Black hole proximity** - accurate geodesics near the photon sphere
+2. **Disk plane proximity** - smaller steps when approaching y = 0
+3. **Local disk thickness** - even smaller steps in thin regions
+
+The thin inner disk is now rendered correctly!
+
+### 3.6 The Banding Problem
+
+With our adaptive stepper, the disk shape is correct. But if you look carefully, you might notice another artifact: **banding**. The disk has visible stripes where the sampling is uniform.
+
+This happens because every ray at a similar depth takes steps at the same positions. When those positions align with our noise functions or color gradients, we get coherent patterns instead of smooth gradients.
+
+### 3.7 Third Fix: Step Jitter
+
+The solution is to add controlled randomness to our sampling positions:
+
+```javascript
+// Apply jitter to sample position (not ray path) to break up banding
+// This keeps the ray path deterministic for stable background stars
+const sampleNoise = hash33(rayPos.add(vec3(frameIndex.mul(0.1))));
+const jitterOffset = sampleNoise.sub(0.5).mul(adaptiveStep).mul(stepJitter);
+const samplePos = rayPos.add(jitterOffset);
+
+// Use samplePos (not rayPos) for disk sampling
+const hitR = sqrt(samplePos.x.mul(samplePos.x).add(samplePos.z.mul(samplePos.z)));
+```
+
+Key insight: we jitter the **sampling position**, not the **ray position**. If we jittered the ray itself, background stars would flicker because each frame would trace a different path. By keeping the ray path deterministic and only jittering where we sample the disk, we get:
+- Smooth, band-free disk rendering
+- Stable, flicker-free background stars
+
+The `stepJitter` parameter (typically 0.15-0.3) controls how much randomness to add. More jitter breaks up banding better but can introduce noise at low sample counts.
+
+### 3.8 Disk Color and Opacity
+
+With our sampling working correctly, we can focus on the disk appearance:
+
+```javascript
+const accretionDiskColor = Fn(([hitR, hitAngle, time]) => {
+    // Normalized radius (0 at inner edge, 1 at outer edge)
+    const normR = clamp(hitR.sub(innerR).div(outerR.sub(innerR)), 0.0, 1.0);
+
+    // Temperature profile: T ~ r^(-3/4)
+    const temperature = pow(normR.add(0.05), float(-0.75)).mul(diskTemperature);
+
+    // Color based on temperature
+    const colorMix = smoothstep(float(0.5), float(2.5), temperature);
+    const diskColor = mix(outerColor, innerColor, colorMix);
+
+    // Turbulence for realistic swirling patterns
+    const orbitalPhase = hitAngle.add(time.mul(rotationSpeed).div(sqrt(hitR.add(0.5))));
+    const turbCoord = vec3(
+        cos(orbitalPhase).mul(hitR),
+        sin(orbitalPhase).mul(hitR),
+        hitR.mul(0.5)
+    );
+    const turbulence = fbm(turbCoord.mul(turbulenceScale));
+
+    return vec4(diskColor, turbulence);  // rgb = color, a = opacity
 });
 ```
 
-**Ring Structure:**
-Real accretion disks show concentric rings due to density variations. We simulate this with layered sine waves:
+### 3.9 Creating Ring Patterns
+
+Real accretion disks aren't uniformly bright - they have concentric ring structures caused by density waves, orbital resonances, and variations in the flow of material. Let's add these patterns to make our disk more realistic.
+
+#### First Attempt: Sine Waves
+
+The most obvious approach is to use sine waves based on radius:
 
 ```javascript
-const ring1 = sin(hitR.mul(ringCount).mul(0.8)).mul(0.5).add(0.5);
-const ring2 = sin(hitR.mul(ringCount).mul(2.0).add(time)).mul(0.3).add(0.7);
-const ring3 = sin(hitR.mul(ringCount).mul(5.0)).mul(0.2).add(0.8);
-const ringPattern = ring1.mul(ring2).mul(ring3);
+// Simple sine wave rings
+const ringPattern = sin(hitR.mul(ringScale)).mul(0.5).add(0.5);
+const opacity = ringPattern.mul(baseOpacity);
 ```
 
-**Turbulence:**
-For realistic swirling patterns, we add Fractal Brownian Motion (FBM) noise:
+This creates perfectly regular, evenly-spaced rings:
+
+The problem? Nature isn't this regular. Real accretion disk features vary in spacing, intensity, and sharpness. Our sine wave rings look artificial - like the grooves on a vinyl record rather than the chaotic flow of superheated plasma.
+
+#### The Fix: 1D Noise
+
+Instead of regular sine waves, we can use 1D noise to create irregular ring patterns. The key insight is that we only need to vary by *radius* - we want concentric rings, not random blobs.
 
 ```javascript
-const turbCoord = vec3(
-    cos(hitAngle).mul(hitR.mul(0.3)),
-    sin(hitAngle).mul(hitR.mul(0.3)),
-    time.mul(0.1)
+/**
+ * 1D Value noise for ring patterns.
+ * Takes a single float input and returns smooth noise in [0,1].
+ */
+const noise1D = Fn(([x]) => {
+    const i = floor(x);
+    const f = fract(x);
+    // Quintic interpolation for smooth results
+    const u = f.mul(f).mul(f).mul(f.mul(f.mul(6.0).sub(15.0)).add(10.0));
+    // Hash the integer positions
+    const a = fract(sin(i.mul(127.1)).mul(43758.5453));
+    const b = fract(sin(i.add(1.0).mul(127.1)).mul(43758.5453));
+    return mix(a, b, u);
+});
+```
+
+But a single octave of noise creates rings that are all similar in thickness. For more natural variation, we use Fractal Brownian Motion (FBM) - multiple octaves of noise at different scales:
+
+```javascript
+/**
+ * 1D Fractal Brownian Motion for ring patterns.
+ */
+const fbm1D = Fn(([x, octaves, lacunarity, persistence]) => {
+    const value = float(0.0).toVar();
+    const amplitude = float(1.0).toVar();
+    const frequency = float(1.0).toVar();
+    const maxValue = float(0.0).toVar();
+
+    // Add multiple octaves of noise
+    for (let i = 0; i < octaves; i++) {
+        value.addAssign(noise1D(x.mul(frequency)).mul(amplitude));
+        maxValue.addAssign(amplitude);
+        amplitude.mulAssign(persistence);  // Each octave is quieter
+        frequency.mulAssign(lacunarity);   // Each octave is higher frequency
+    }
+
+    return value.div(maxValue);  // Normalize to [0, 1]
+});
+```
+
+The parameters control the character of the rings:
+- **Scale**: How many rings across the disk (3-10 works well)
+- **Octaves**: How many layers of detail (3-4 is typical)
+- **Lacunarity**: Frequency multiplier between octaves (2.0 = each octave is twice the frequency)
+- **Persistence**: Amplitude multiplier between octaves (0.5 = each octave is half as loud)
+
+Now we apply this to our disk opacity:
+
+```javascript
+// Sample 1D FBM noise based on radius
+const noiseInput = hitR.mul(ringNoiseScale);
+const ringNoise = fbm1D(
+    noiseInput,
+    ringNoiseOctaves,
+    ringNoiseLacunarity,
+    ringNoisePersistence
 );
-const turbulence = fbm(turbCoord).mul(turbulenceAmount);
+
+// Apply amplitude, offset, and sharpness
+const rawRing = ringNoise.mul(ringNoiseAmplitude).add(ringNoiseOffset);
+const ringOpacity = pow(clamp(rawRing, 0.0, 1.0), ringNoiseSharpness);
 ```
 
-### 3.4 Relativistic Effects
+The **sharpness** parameter is particularly useful - higher values create sharper, more defined ring boundaries, while lower values give softer, more diffuse patterns.
 
-**Doppler Beaming:**
-Material in the disk orbits the black hole. The side moving toward us appears brighter:
+The result is much more convincing: rings that vary in spacing, thickness, and intensity, creating the kind of structure we see in actual astronomical observations.
 
-```javascript
-// Orbital velocity (Keplerian)
-const orbitalSpeed = sqrt(blackHoleMass.div(hitR)).mul(0.4);
-
-// Velocity direction (perpendicular to radius)
-const velDir = vec3(sin(hitAngle).negate(), 0.0, cos(hitAngle));
-
-// Doppler factor
-const dopplerFactor = 1.0 + dot(velDir, rayDir.negate()) * orbitalSpeed * strength;
-const doppler = pow(clamp(dopplerFactor, 0.5, 2.0), 3.0);
-
-diskColor.mulAssign(doppler);
-```
+### 3.10 Relativistic Effects
 
 **Gravitational Redshift:**
 Light loses energy climbing out of a gravity well:
@@ -243,7 +411,7 @@ const redshift = sqrt(1.0 - rs / hitR);
 diskColor.mulAssign(redshift);
 ```
 
-### 3.5 Procedural Background
+### 3.11 Procedural Background
 
 Our star field uses a grid-based approach for consistent star positions:
 
@@ -290,20 +458,19 @@ We expose ray count and step size as parameters:
 | High   | 150       | 0.2       | 30         |
 | Ultra  | 256       | 0.15      | 15-30      |
 
-### 4.2 Adaptive Stepping
+### 4.2 The Adaptive Stepping Performance Benefit
 
-Small steps near the black hole, large steps far away:
-
-```javascript
-const step = baseStep * smoothstep(0, 5*rs, distFromHorizon);
-```
+Our disk-aware adaptive stepping isn't just about quality - it's also about performance. By using larger steps in empty space, we:
+- Take fewer total steps to traverse the same distance
+- Spend our step budget where it matters (near geometry)
+- Maintain quality while improving frame rate
 
 ### 4.3 Early Termination
 
 Exit the loop as soon as we know the ray's fate:
-- Captured: `r < rs`
-- Escaped: `totalDistance > maxDistance`
-- Opaque: `alpha > 0.99`
+- **Captured**: `r < rs` - ray fell into black hole
+- **Escaped**: `totalDistance > maxDistance` - ray left the scene
+- **Opaque**: `alpha > 0.99` - accumulated enough disk material
 
 ---
 
@@ -313,7 +480,7 @@ The final simulation achieves:
 - **Real-time performance** (30-60 FPS) on modern GPUs
 - **Physically-based** gravitational lensing
 - **Interactive** camera controls and parameters
-- **Beautiful** accretion disk with rings and turbulence
+- **Beautiful** accretion disk with turbulence and proper thin-disk handling
 
 The effect is most dramatic when you orbit the camera around the black hole - you can see how the disk bends above and below, creating the iconic "Interstellar" look.
 
@@ -325,14 +492,17 @@ We've built a real-time black hole visualization using WebGPU and Three.js. Alon
 
 1. **Schwarzschild spacetime** - How black holes curve light
 2. **Raymarching** - Why it's ideal for curved spacetime
-3. **Accretion disks** - Temperature profiles and Doppler beaming
-4. **TSL shaders** - Writing GPU code in JavaScript
+3. **Adaptive stepping** - Solving aliasing with geometry-aware step sizes
+4. **Jitter** - Breaking up banding artifacts while keeping background stable
+5. **TSL shaders** - Writing GPU code in JavaScript
+
+The key lesson is that building graphics involves an iterative process: implement something simple, observe where it breaks, then fix it with targeted solutions. Each "fix" deepens our understanding of both the problem and the underlying physics.
 
 **Potential extensions:**
 - Spinning (Kerr) black holes with frame dragging
 - Wormholes connecting two regions of space
-- Volumetric accretion disk rendering
 - Relativistic jets
+- Gravitational waves affecting the spacetime
 
 ---
 

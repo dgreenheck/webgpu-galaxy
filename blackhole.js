@@ -36,11 +36,11 @@ import {
   sqrt,
   abs,
   pow,
+  exp,
   fract,
   clamp,
   smoothstep,
   mix,
-  sign,
   floor,
   step,
   Loop,
@@ -63,28 +63,36 @@ export const QUALITY_PRESETS = {
     stepSize: 0.4,
     diskDetail: 1,
     starsEnabled: false,
-    nebulaEnabled: false
+    nebulaEnabled: false,
+    rayJitter: 1.0,      // Higher jitter compensates for fewer steps
+    stepJitter: 0.3
   },
   medium: {
     raySteps: 100,
     stepSize: 0.3,
     diskDetail: 2,
     starsEnabled: true,
-    nebulaEnabled: false
+    nebulaEnabled: false,
+    rayJitter: 1.0,
+    stepJitter: 0.25
   },
   high: {
     raySteps: 150,
     stepSize: 0.2,
     diskDetail: 3,
     starsEnabled: true,
-    nebulaEnabled: true
+    nebulaEnabled: true,
+    rayJitter: 0.8,
+    stepJitter: 0.2
   },
   ultra: {
     raySteps: 256,
     stepSize: 0.15,
     diskDetail: 4,
     starsEnabled: true,
-    nebulaEnabled: true
+    nebulaEnabled: true,
+    rayJitter: 0.6,      // Less jitter needed with more steps
+    stepJitter: 0.15
   }
 };
 
@@ -116,27 +124,65 @@ export class BlackHoleSimulation {
       // === Accretion Disk Appearance ===
       diskTemperature: uniform(config.diskTemperature ?? 1.5),
       diskBrightness: uniform(config.diskBrightness ?? 2.0),
-      diskTurbulence: uniform(config.diskTurbulence ?? 0.5),
-      diskRingCount: uniform(config.diskRingCount ?? 8.0),
       diskRotationSpeed: uniform(config.diskRotationSpeed ?? 0.3),
+      diskInnerThickness: uniform(config.diskInnerThickness ?? 0.1),
+      diskOuterThickness: uniform(config.diskOuterThickness ?? 0.8),
+
+      // === Ring Pattern Controls ===
+      ringEnabled: uniform(config.ringEnabled ? 1.0 : 0.0),
+      ringScale: uniform(config.ringScale ?? 1.0),
+      ringContrast: uniform(config.ringContrast ?? 1.5),
+      ringBrightness: uniform(config.ringBrightness ?? 0.3),
+      ringSharpness: uniform(config.ringSharpness ?? 1.0),
+      ringTwist: uniform(config.ringTwist ?? 0.5),
+      diskDifferentialRotation: uniform(config.diskDifferentialRotation ?? 0.8),
+
+      // === Disk Edge Falloff ===
+      diskEdgeSoftnessInner: uniform(config.diskEdgeSoftnessInner ?? 0.15),
+      diskEdgeSoftnessOuter: uniform(config.diskEdgeSoftnessOuter ?? 0.15),
+      diskRadialFalloff: uniform(config.diskRadialFalloff ?? 0.5),
 
       // === Disk Color (User Configurable) ===
       diskInnerColor: uniform(new THREE.Color(config.diskInnerColor ?? '#ffffee')),
       diskOuterColor: uniform(new THREE.Color(config.diskOuterColor ?? '#ff4400')),
 
       // === Relativistic Effects ===
-      dopplerStrength: uniform(config.dopplerStrength ?? 0.8),
-      photonRingIntensity: uniform(config.photonRingIntensity ?? 1.0),
+      gravitationalLensing: uniform(config.gravitationalLensing ?? 1.5),
+
+      // === Volumetric Rendering ===
+      diskDensity: uniform(config.diskDensity ?? 0.25),
+      diskOpacityFalloff: uniform(config.diskOpacityFalloff ?? 0.8),
 
       // === Performance ===
       raySteps: uniform(config.raySteps ?? 100),
       stepSize: uniform(config.stepSize ?? 0.3),
+      adaptiveMinStep: uniform(config.adaptiveMinStep ?? 0.15),
 
-      // === Background ===
+      // === Anti-Aliasing ===
+      rayJitter: uniform(config.rayJitter ?? 1.0),
+      stepJitter: uniform(config.stepJitter ?? 0.25),
+      frameIndex: uniform(0),
+
+      // === Stars ===
       starsEnabled: uniform(config.starsEnabled ? 1.0 : 0.0),
       starDensity: uniform(config.starDensity ?? 0.003),
+      starSize: uniform(config.starSize ?? 2.0),
+      starBrightness: uniform(config.starBrightness ?? 1.0),
+
+      // === Nebula ===
       nebulaEnabled: uniform(config.nebulaEnabled ? 1.0 : 0.0),
       nebulaBrightness: uniform(config.nebulaBrightness ?? 0.15),
+      nebulaColor1: uniform(new THREE.Color(config.nebulaColor1 ?? '#1a0033')),
+      nebulaColor2: uniform(new THREE.Color(config.nebulaColor2 ?? '#4d1a26')),
+      nebulaScale: uniform(config.nebulaScale ?? 2.0),
+      nebulaDetailScale: uniform(config.nebulaDetailScale ?? 2.0),
+      nebulaSpeed: uniform(config.nebulaSpeed ?? 0.01),
+      nebulaDensity: uniform(config.nebulaDensity ?? 2.0),
+      nebulaOffset: uniform(new THREE.Vector3(
+        config.nebulaOffsetX ?? 0.0,
+        config.nebulaOffsetY ?? 0.0,
+        config.nebulaOffsetZ ?? 0.0
+      )),
 
       // === Animation State ===
       time: uniform(0),
@@ -206,46 +252,6 @@ export class BlackHoleSimulation {
     });
 
     /**
-     * 1D hash function for noise
-     */
-    const hash11 = Fn(([p]) => {
-      const n = fract(sin(p.mul(127.1)).mul(43758.5453));
-      return n;
-    });
-
-    /**
-     * 1D value noise for radial band variation
-     */
-    const noise1D = Fn(([p]) => {
-      const i = floor(p);
-      const f = fract(p);
-      // Smooth interpolation
-      const u = f.mul(f).mul(float(3.0).sub(f.mul(2.0)));
-      return mix(hash11(i), hash11(i.add(1.0)), u);
-    });
-
-    /**
-     * Multi-octave 1D noise for irregular band patterns
-     * Creates varying line widths - some thin, some thick
-     */
-    const irregularBands = Fn(([r, scale]) => {
-      const value = float(0.0).toVar();
-      const amplitude = float(1.0).toVar();
-      const frequency = float(1.0).toVar();
-      const pos = r.mul(scale).toVar();
-
-      // Multiple octaves with different frequencies for varied line widths
-      // High frequency = fine lines, low frequency = thick bands
-      Loop(6, () => {
-        value.addAssign(noise1D(pos.mul(frequency)).mul(amplitude));
-        frequency.mulAssign(2.17); // Non-integer for less repetition
-        amplitude.mulAssign(0.5);
-      });
-
-      return value;
-    });
-
-    /**
      * 3D Value noise for turbulence effects.
      */
     const noise3D = Fn(([p]) => {
@@ -301,6 +307,64 @@ export class BlackHoleSimulation {
       return value;
     });
 
+    /**
+     * 1D Value noise for ring patterns.
+     * Takes a single float input and returns smooth noise in [0,1].
+     */
+    const noise1D = Fn(([x]) => {
+      const i = floor(x);
+      const f = fract(x);
+      // Smooth interpolation (quintic for smoother results)
+      const u = f.mul(f).mul(f).mul(f.mul(f.mul(6.0).sub(15.0)).add(10.0));
+      // Hash the integer positions
+      const a = fract(sin(i.mul(127.1)).mul(43758.5453));
+      const b = fract(sin(i.add(1.0).mul(127.1)).mul(43758.5453));
+      return mix(a, b, u);
+    });
+
+    /**
+     * 1D Fractal Brownian Motion for ring patterns.
+     * Produces natural-looking variation with configurable octaves.
+     */
+    const fbm1D = Fn(([x, octaves, lacunarity, persistence]) => {
+      const value = float(0.0).toVar();
+      const amplitude = float(1.0).toVar();
+      const frequency = float(1.0).toVar();
+      const maxValue = float(0.0).toVar();
+      const pos = x.toVar();
+
+      // Unrolled loop for up to 4 octaves (controlled by octaves uniform)
+      // Octave 1
+      If(octaves.greaterThanEqual(1.0), () => {
+        value.addAssign(noise1D(pos.mul(frequency)).mul(amplitude));
+        maxValue.addAssign(amplitude);
+        amplitude.mulAssign(persistence);
+        frequency.mulAssign(lacunarity);
+      });
+      // Octave 2
+      If(octaves.greaterThanEqual(2.0), () => {
+        value.addAssign(noise1D(pos.mul(frequency)).mul(amplitude));
+        maxValue.addAssign(amplitude);
+        amplitude.mulAssign(persistence);
+        frequency.mulAssign(lacunarity);
+      });
+      // Octave 3
+      If(octaves.greaterThanEqual(3.0), () => {
+        value.addAssign(noise1D(pos.mul(frequency)).mul(amplitude));
+        maxValue.addAssign(amplitude);
+        amplitude.mulAssign(persistence);
+        frequency.mulAssign(lacunarity);
+      });
+      // Octave 4
+      If(octaves.greaterThanEqual(4.0), () => {
+        value.addAssign(noise1D(pos.mul(frequency)).mul(amplitude));
+        maxValue.addAssign(amplitude);
+      });
+
+      // Normalize to [0, 1]
+      return value.div(maxValue.max(0.001));
+    });
+
     // ========================================================================
     // SECTION 4: PROCEDURAL BACKGROUND
     // ========================================================================
@@ -314,8 +378,8 @@ export class BlackHoleSimulation {
       const theta = atan(rayDir.z, rayDir.x);
       const phi = asin(clamp(rayDir.y, float(-1.0), float(1.0)));
 
-      // Create grid cells
-      const gridScale = float(50.0);
+      // Create grid cells - lower scale = larger cells = bigger stars
+      const gridScale = float(60.0).div(uniforms.starSize);
       const cell = vec2(theta, phi).mul(gridScale).floor();
       const cellUV = fract(vec2(theta, phi).mul(gridScale));
 
@@ -329,9 +393,14 @@ export class BlackHoleSimulation {
       const starPos = hash33(vec3(cell.x, cell.y, float(42.0))).xy.mul(0.8).add(0.1);
       const distToStar = length(cellUV.sub(starPos));
 
-      // Star brightness with size variation
-      const starSize = hash21(cell.add(100.0)).mul(0.015).add(0.005);
-      const starBrightness = smoothstep(starSize, float(0.0), distToStar).mul(starProb);
+      // Star size with variation - base size scaled by uniform
+      const baseSizeVar = hash21(cell.add(100.0)).mul(0.03).add(0.01);
+      const finalStarSize = baseSizeVar.mul(uniforms.starSize);
+
+      // Star brightness with soft glow
+      const starCore = smoothstep(finalStarSize, float(0.0), distToStar);
+      const starGlow = smoothstep(finalStarSize.mul(3.0), float(0.0), distToStar).mul(0.3);
+      const starIntensity = starCore.add(starGlow).mul(starProb);
 
       // Star color variation (blue to yellow)
       const colorTemp = hash21(cell.add(200.0));
@@ -341,7 +410,7 @@ export class BlackHoleSimulation {
         colorTemp
       );
 
-      return starColor.mul(starBrightness).mul(0.8);
+      return starColor.mul(starIntensity).mul(uniforms.starBrightness);
     });
 
     /**
@@ -349,19 +418,20 @@ export class BlackHoleSimulation {
      * Uses layered 3D noise for volumetric appearance.
      */
     const nebulaField = Fn(([rayDir, time]) => {
-      const noisePos = rayDir.mul(2.0);
+      // Apply offset and scale to create varied nebula positions
+      const noisePos = rayDir.mul(uniforms.nebulaScale).add(uniforms.nebulaOffset);
 
       // Multiple noise layers for depth
-      const n1 = fbm(noisePos.add(time.mul(0.01)));
-      const n2 = fbm(noisePos.mul(2.0).sub(time.mul(0.005)));
+      const n1 = fbm(noisePos.add(time.mul(uniforms.nebulaSpeed)));
+      const n2 = fbm(noisePos.mul(uniforms.nebulaDetailScale).sub(time.mul(uniforms.nebulaSpeed.mul(0.5))));
 
       // Combine noise layers
-      const nebula = n1.mul(n2).mul(2.0);
+      const nebula = n1.mul(n2).mul(uniforms.nebulaDensity);
 
-      // Color gradient (purple/red/blue nebula colors)
+      // Color gradient using user-defined colors
       const nebulaColor = mix(
-        vec3(0.1, 0.0, 0.2),  // Deep purple
-        vec3(0.3, 0.1, 0.15), // Dusty red
+        uniforms.nebulaColor1,
+        uniforms.nebulaColor2,
         n1
       ).add(vec3(0.05, 0.05, 0.1).mul(n2));
 
@@ -373,8 +443,8 @@ export class BlackHoleSimulation {
     // ========================================================================
 
     /**
-     * Calculate the color and intensity of the accretion disk at a given point.
-     * Implements temperature-based coloring with irregular radial bands.
+     * Calculate the color and opacity of the accretion disk at a given point.
+     * Returns vec4(color.rgb, opacity) where ring patterns control opacity.
      */
     const accretionDiskColor = Fn(([hitR, hitAngle, time]) => {
       const innerR = uniforms.diskInnerRadius;
@@ -383,58 +453,53 @@ export class BlackHoleSimulation {
       // Normalized radius (0 at inner edge, 1 at outer edge)
       const normR = clamp(hitR.sub(innerR).div(outerR.sub(innerR)), float(0.0), float(1.0));
 
-      // === IRREGULAR RADIAL BANDS ===
-      // Use multi-octave 1D noise for natural-looking irregular bands
-      // The bands should vary in width - some thin lines, some thick bands
-      const bandScale = uniforms.diskRingCount.mul(3.0);
-
-      // Multiple layers of noise at different scales for band variation
-      const bands1 = irregularBands(hitR, bandScale);
-      const bands2 = irregularBands(hitR.add(17.3), bandScale.mul(1.7));
-      const bands3 = irregularBands(hitR.add(31.7), bandScale.mul(0.5));
-
-      // Create sharp transitions for distinct band edges
-      // Use pow to sharpen the bands and create more defined lines
-      const sharpBands = pow(bands1.mul(0.5).add(0.5), float(2.0));
-
-      // Combine bands with variation in intensity
-      const bandIntensity = sharpBands.mul(bands2.mul(0.3).add(0.7)).mul(bands3.mul(0.4).add(0.6));
-
-      // Add some extra fine detail bands
-      const fineDetail = noise1D(hitR.mul(bandScale).mul(8.0)).mul(0.15).add(0.85);
-
-      // Final ring pattern combines all band layers
-      const ringPattern = bandIntensity.mul(fineDetail);
-
-      // === TURBULENCE ===
-      // Swirling patterns using noise (reduced to keep bands prominent)
-      const turbCoord = vec3(
-        cos(hitAngle).mul(hitR.mul(0.3)),
-        sin(hitAngle).mul(hitR.mul(0.3)),
-        time.mul(0.1)
-      );
-      const turb = fbm(turbCoord).mul(uniforms.diskTurbulence).mul(0.5);
-
-      // === TEMPERATURE PROFILE ===
+      // === BLACKBODY DISK COLOR (pure radial temperature profile) ===
       // Shakura-Sunyaev thin disk: T ~ r^(-3/4)
       // Hotter near the black hole, cooler at edges
-      const baseTemp = pow(normR.add(0.05), float(-0.75)).mul(uniforms.diskTemperature);
-      const tempVariation = ringPattern.mul(0.2).add(turb.mul(0.1));
-      const finalTemp = clamp(baseTemp.mul(float(0.8).add(tempVariation)), float(0.3), float(4.0));
+      const temperature = pow(normR.add(0.05), float(-0.75)).mul(uniforms.diskTemperature);
 
-      // === COLOR FROM TEMPERATURE ===
       // Interpolate between user-defined inner/outer colors based on temperature
-      const colorMix = smoothstep(float(0.5), float(2.5), finalTemp);
-      const baseColor = mix(uniforms.diskOuterColor, uniforms.diskInnerColor, colorMix);
-
-      // === INTENSITY MODULATION ===
-      const intensity = ringPattern.mul(float(0.9).add(turb.mul(0.2)));
+      const colorMix = smoothstep(float(0.5), float(2.5), temperature);
+      const diskColor = mix(uniforms.diskOuterColor, uniforms.diskInnerColor, colorMix);
 
       // Edge falloff - disk fades at boundaries
-      const edgeFalloff = smoothstep(float(0.0), float(0.1), normR)
-        .mul(smoothstep(float(1.0), float(0.9), normR));
+      const edgeFalloff = smoothstep(float(0.0), uniforms.diskEdgeSoftnessInner, normR)
+        .mul(smoothstep(float(1.0), float(1.0).sub(uniforms.diskEdgeSoftnessOuter), normR));
 
-      return baseColor.mul(intensity).mul(edgeFalloff).mul(uniforms.diskBrightness);
+      // === RING PATTERN ===
+      // Creates stretched ring structures using 2D noise with radius-dependent twist
+      // The twist creates elongated features, cartesian coords ensure seamless wrapping
+      const ringOpacity = float(1.0).toVar('ringOpacity');
+
+      If(uniforms.ringEnabled.greaterThan(0.5), () => {
+        // Uniform rotation - keeps pattern structure stable (no winding)
+        const rotation = time.mul(uniforms.diskRotationSpeed);
+
+        // Static twist based on radius - creates the sheared/elongated appearance
+        // This is what makes features look stretched, not the time animation
+        const staticTwist = hitR.add(1.0).log().mul(uniforms.ringTwist);
+
+        // Combined angle - uniform rotation + static twist
+        const sampleAngle = hitAngle.add(rotation).add(staticTwist);
+
+        // Cartesian coordinates for noise - naturally seamless
+        const noiseX = hitR.mul(cos(sampleAngle));
+        const noiseY = hitR.mul(sin(sampleAngle));
+
+        // Sample 2D FBM noise
+        const noiseCoord = vec3(noiseX, noiseY, float(0.0)).mul(uniforms.ringScale);
+        const ringNoise = fbm(noiseCoord);
+
+        // Apply contrast, brightness, and sharpness
+        const rawRing = ringNoise.mul(uniforms.ringContrast).add(uniforms.ringBrightness);
+        ringOpacity.assign(pow(clamp(rawRing, float(0.0), float(1.0)), uniforms.ringSharpness));
+      });
+
+      const finalOpacity = ringOpacity;
+
+      // Return vec4: rgb = disk color (with edge falloff and brightness), a = opacity
+      const finalColor = diskColor.mul(edgeFalloff).mul(uniforms.diskBrightness);
+      return vec4(finalColor, finalOpacity);
     });
 
     // ========================================================================
@@ -470,15 +535,14 @@ export class BlackHoleSimulation {
 
       // === INITIALIZE RAY STATE ===
       const rayPos = camPos.toVar('rayPos');
-      const totalDist = float(0.0).toVar('totalDist');
-      const maxDist = float(100.0);
+
+      // Note: Initial ray jitter was removed because it affects the gravitational
+      // lensing path, causing background stars/nebula to flicker. Per-step jitter
+      // (applied in the raymarching loop) is sufficient for anti-banding on the disk.
 
       // Accumulated color with alpha for blending
       const color = vec3(0.0, 0.0, 0.0).toVar('color');
       const alpha = float(0.0).toVar('alpha');
-
-      // Track previous position for disk intersection
-      const prevY = rayPos.y.toVar('prevY');
 
       // Ray status
       const escaped = float(0.0).toVar('escaped');
@@ -490,7 +554,16 @@ export class BlackHoleSimulation {
 
       // === RAYMARCHING LOOP ===
       // Trace ray through curved spacetime
-      Loop(256, () => {
+      // Max iterations is hardcoded (shader requirement), but raySteps uniform controls early exit
+      const iterCount = float(0.0).toVar('iterCount');
+      Loop(512, () => {
+        // Check iteration limit (allows dynamic control via UI)
+        If(iterCount.greaterThanEqual(uniforms.raySteps), () => {
+          escaped.assign(1.0);
+          Break();
+        });
+        iterCount.addAssign(1.0);
+
         // Check if we've already terminated
         If(escaped.greaterThan(0.5).or(captured.greaterThan(0.5)).or(alpha.greaterThan(0.99)), () => {
           Break();
@@ -504,75 +577,139 @@ export class BlackHoleSimulation {
           Break();
         });
 
-        // === TERMINATION: ESCAPED TO INFINITY ===
-        If(totalDist.greaterThan(maxDist), () => {
-          escaped.assign(1.0);
-          Break();
-        });
-
         // === ADAPTIVE STEP SIZE ===
-        // Smaller steps near the black hole for accuracy
+        // Three factors control step size for accurate sampling:
+        //
+        // 1. Black hole proximity: Smaller steps near event horizon
+        //    for accurate geodesic integration
+        //
+        // 2. Disk proximity: Smaller steps near the disk plane (y≈0)
+        //    to avoid stepping over thin disk regions
+        //
+        // 3. Disk thickness awareness: The inner disk is thinner than
+        //    the outer disk, requiring proportionally smaller steps
+
+        // Factor 1: Distance from event horizon
         const distFromHorizon = r.sub(rs);
-        const adaptiveStep = uniforms.stepSize.mul(
-          smoothstep(float(0.0), rs.mul(5.0), distFromHorizon)
-            .mul(0.8).add(0.2)
+        const horizonFactor = smoothstep(float(0.0), rs.mul(5.0), distFromHorizon)
+          .mul(0.8).add(0.2);
+
+        // Factor 2 & 3: Disk proximity with thickness awareness
+        // Calculate horizontal distance (radius in disk plane)
+        const rHoriz = sqrt(rayPos.x.mul(rayPos.x).add(rayPos.z.mul(rayPos.z)));
+
+        // Check if we're within the disk's radial extent (with some margin)
+        // Use smoothstep for soft boundary instead of hard boolean
+        const diskMargin = float(2.0);
+        const inDiskRegion = smoothstep(innerR.sub(diskMargin.mul(2.0)), innerR.sub(diskMargin), rHoriz)
+          .mul(smoothstep(outerR.add(diskMargin.mul(2.0)), outerR.add(diskMargin), rHoriz));
+
+        // Calculate local disk thickness at this radius
+        const normRForThickness = clamp(
+          rHoriz.sub(innerR).div(outerR.sub(innerR)),
+          float(0.0), float(1.0)
         );
+        const localThickness = mix(
+          uniforms.diskInnerThickness,
+          uniforms.diskOuterThickness,
+          normRForThickness
+        );
+
+        // When approaching the disk plane, reduce step size
+        // Scale step reduction based on distance to disk vs local thickness
+        // At |y| = 3*thickness, factor = 1.0 (no reduction)
+        // At |y| = 0, factor = adaptiveMinStep (minimum step for thin regions)
+        const approachDistance = float(3.0);
+        const distToPlane = abs(rayPos.y);
+        const thicknessScale = localThickness.max(0.05); // Prevent division issues
+        const diskProximity = distToPlane.div(thicknessScale.mul(approachDistance));
+        const minStep = uniforms.adaptiveMinStep;
+        const diskFactor = smoothstep(float(0.0), float(1.0), diskProximity)
+          .mul(float(1.0).sub(minStep)).add(minStep);
+
+        // Combine factors: use disk factor only when in disk region
+        // inDiskRegion is already 0-1 from smoothstep, so use it directly
+        const combinedDiskFactor = mix(float(1.0), diskFactor, inDiskRegion);
+        const adaptiveStep = uniforms.stepSize.mul(horizonFactor).mul(combinedDiskFactor);
 
         // === GRAVITATIONAL LIGHT BENDING ===
         // Simplified geodesic: acceleration toward black hole
         // Based on Schwarzschild metric: a ≈ -rs/(2r^2) * r_hat
         const toCenter = rayPos.negate().normalize();
-        const bendStrength = rs.div(r.mul(r)).mul(adaptiveStep).mul(1.5);
+        const bendStrength = rs.div(r.mul(r)).mul(adaptiveStep).mul(uniforms.gravitationalLensing);
 
         // Apply bending to ray direction
         rayDir.addAssign(toCenter.mul(bendStrength));
         rayDir.assign(normalize(rayDir));
 
-        // Store previous Y for disk intersection detection
-        prevY.assign(rayPos.y);
-
-        // Step ray forward
+        // Step ray forward (deterministic - no jitter here to keep background stable)
         rayPos.addAssign(rayDir.mul(adaptiveStep));
-        totalDist.addAssign(adaptiveStep);
 
-        // === DISK INTERSECTION DETECTION ===
-        // Check if ray crossed the disk plane (y = 0)
-        const currY = rayPos.y;
-        const crossed = sign(prevY).notEqual(sign(currY));
+        // === VOLUMETRIC DISK SAMPLING ===
+        // Apply jitter to sample position (not ray path) to break up banding
+        // This keeps the ray path deterministic for stable background stars
+        const sampleNoise = hash33(rayPos.add(vec3(uniforms.frameIndex.mul(0.1))));
+        const jitterOffset = sampleNoise.sub(0.5).mul(adaptiveStep).mul(uniforms.stepJitter);
+        const samplePos = rayPos.add(jitterOffset);
 
-        If(crossed.and(alpha.lessThan(0.95)), () => {
-          // Interpolate exact crossing point
-          const t = abs(prevY).div(abs(prevY).add(abs(currY)).max(0.0001));
-          const hitX = rayPos.x.sub(rayDir.x.mul(adaptiveStep.mul(float(1.0).sub(t))));
-          const hitZ = rayPos.z.sub(rayDir.z.mul(adaptiveStep.mul(float(1.0).sub(t))));
-          const hitR = sqrt(hitX.mul(hitX).add(hitZ.mul(hitZ)));
+        // Check if ray is inside the disk volume (using jittered sample position)
+        const hitR = sqrt(samplePos.x.mul(samplePos.x).add(samplePos.z.mul(samplePos.z)));
 
-          // Check if within disk bounds
-          If(hitR.greaterThan(innerR).and(hitR.lessThan(outerR)), () => {
-            const hitAngle = atan(hitZ, hitX);
+        // Normalized radius for tapering (0 at inner, 1 at outer)
+        const normR = clamp(hitR.sub(innerR).div(outerR.sub(innerR)), float(0.0), float(1.0));
 
-            // Get disk color at this point
-            const diskCol = accretionDiskColor(hitR, hitAngle, uniforms.time);
+        // === SOFT RADIAL FALLOFF (prevents sawblade artifacts) ===
+        // Use smooth density falloff instead of hard cutoffs
+        const radialFalloffWidth = uniforms.diskRadialFalloff;
+        const innerFalloff = smoothstep(
+          innerR.sub(radialFalloffWidth),
+          innerR.add(radialFalloffWidth),
+          hitR
+        );
+        const outerFalloff = smoothstep(
+          outerR.add(radialFalloffWidth),
+          outerR.sub(radialFalloffWidth),
+          hitR
+        );
+        const radialDensity = innerFalloff.mul(outerFalloff);
 
-            // === DOPPLER BEAMING ===
-            // Material orbits the black hole - approaching side is brighter
-            const orbitalSpeed = sqrt(uniforms.blackHoleMass.div(hitR)).mul(0.4);
-            const velDir = vec3(sin(hitAngle).negate(), float(0.0), cos(hitAngle));
-            const dopplerFactor = float(1.0).add(
-              dot(velDir, rayDir.negate()).mul(orbitalSpeed).mul(uniforms.dopplerStrength)
-            );
-            const doppler = pow(clamp(dopplerFactor, float(0.5), float(2.0)), float(3.0));
+        // === DISK THICKNESS PROFILE ===
+        // Linearly interpolate thickness from inner to outer radius
+        const innerHalf = uniforms.diskInnerThickness.mul(0.5);
+        const outerHalf = uniforms.diskOuterThickness.mul(0.5);
+        const localHalfThickness = mix(innerHalf, outerHalf, normR);
 
-            // === GRAVITATIONAL REDSHIFT ===
-            // Light loses energy climbing out of gravity well
-            const redshift = sqrt(clamp(float(1.0).sub(rs.div(hitR)), float(0.1), float(1.0)));
+        // === SOFT HEIGHT FALLOFF ===
+        // Smooth density falloff from center to edge of disk
+        // heightRatio: 0 at disk midplane, 1 at disk surface, >1 outside
+        const heightRatio = abs(samplePos.y).div(localHalfThickness.max(0.01));
 
-            // Accumulate color with alpha blending
-            const contribution = diskCol.mul(doppler).mul(redshift);
-            const remainingAlpha = float(1.0).sub(alpha);
-            color.addAssign(contribution.mul(remainingAlpha));
-            alpha.addAssign(remainingAlpha.mul(0.85));
-          });
+        // Smooth, fast rolloff using smoothstep for clean edges
+        // Density is 1 at midplane, falls to 0 at surface
+        const heightDensity = smoothstep(float(1.0), float(0.0), heightRatio);
+
+        // Combined density - no hard cutoffs
+        const totalDensity = radialDensity.mul(heightDensity);
+
+        // Only process if density is significant
+        If(totalDensity.greaterThan(0.001).and(alpha.lessThan(0.99)), () => {
+          const hitAngle = atan(samplePos.z, samplePos.x);
+
+          // Get disk color and turbulence opacity at this point
+          const diskResult = accretionDiskColor(hitR, hitAngle, uniforms.time);
+          const diskCol = diskResult.xyz;
+          const turbOpacity = diskResult.w;
+
+          // === GRAVITATIONAL REDSHIFT ===
+          // Light loses energy climbing out of gravity well
+          const redshift = sqrt(clamp(float(1.0).sub(rs.div(hitR)), float(0.1), float(1.0)));
+
+          // Volumetric accumulation - turbulence opacity affects both color and alpha
+          const sampleDensity = totalDensity.mul(uniforms.diskDensity).mul(turbOpacity);
+          const contribution = diskCol.mul(redshift).mul(sampleDensity);
+          const remainingAlpha = float(1.0).sub(alpha);
+          color.addAssign(contribution.mul(remainingAlpha));
+          alpha.addAssign(remainingAlpha.mul(sampleDensity.mul(uniforms.diskOpacityFalloff)));
         });
       });
 
@@ -628,22 +765,66 @@ export class BlackHoleSimulation {
   updateUniforms(config) {
     const u = this.uniforms;
 
+    // Physics
     if (config.blackHoleMass !== undefined) u.blackHoleMass.value = config.blackHoleMass;
+
+    // Disk geometry
     if (config.diskInnerRadius !== undefined) u.diskInnerRadius.value = config.diskInnerRadius;
     if (config.diskOuterRadius !== undefined) u.diskOuterRadius.value = config.diskOuterRadius;
+    if (config.diskInnerThickness !== undefined) u.diskInnerThickness.value = config.diskInnerThickness;
+    if (config.diskOuterThickness !== undefined) u.diskOuterThickness.value = config.diskOuterThickness;
+
+    // Disk appearance
     if (config.diskTemperature !== undefined) u.diskTemperature.value = config.diskTemperature;
     if (config.diskBrightness !== undefined) u.diskBrightness.value = config.diskBrightness;
-    if (config.diskTurbulence !== undefined) u.diskTurbulence.value = config.diskTurbulence;
-    if (config.diskRingCount !== undefined) u.diskRingCount.value = config.diskRingCount;
     if (config.diskRotationSpeed !== undefined) u.diskRotationSpeed.value = config.diskRotationSpeed;
-    if (config.dopplerStrength !== undefined) u.dopplerStrength.value = config.dopplerStrength;
-    if (config.photonRingIntensity !== undefined) u.photonRingIntensity.value = config.photonRingIntensity;
+
+    // Ring pattern
+    if (config.ringEnabled !== undefined) u.ringEnabled.value = config.ringEnabled ? 1.0 : 0.0;
+    if (config.ringScale !== undefined) u.ringScale.value = config.ringScale;
+    if (config.ringContrast !== undefined) u.ringContrast.value = config.ringContrast;
+    if (config.ringBrightness !== undefined) u.ringBrightness.value = config.ringBrightness;
+    if (config.ringSharpness !== undefined) u.ringSharpness.value = config.ringSharpness;
+    if (config.ringTwist !== undefined) u.ringTwist.value = config.ringTwist;
+
+    // Disk edge falloff
+    if (config.diskEdgeSoftnessInner !== undefined) u.diskEdgeSoftnessInner.value = config.diskEdgeSoftnessInner;
+    if (config.diskEdgeSoftnessOuter !== undefined) u.diskEdgeSoftnessOuter.value = config.diskEdgeSoftnessOuter;
+    if (config.diskRadialFalloff !== undefined) u.diskRadialFalloff.value = config.diskRadialFalloff;
+
+    // Relativistic effects
+    if (config.gravitationalLensing !== undefined) u.gravitationalLensing.value = config.gravitationalLensing;
+
+    // Volumetric rendering
+    if (config.diskDensity !== undefined) u.diskDensity.value = config.diskDensity;
+    if (config.diskOpacityFalloff !== undefined) u.diskOpacityFalloff.value = config.diskOpacityFalloff;
+
+    // Performance
     if (config.raySteps !== undefined) u.raySteps.value = config.raySteps;
     if (config.stepSize !== undefined) u.stepSize.value = config.stepSize;
+    if (config.adaptiveMinStep !== undefined) u.adaptiveMinStep.value = config.adaptiveMinStep;
+
+    // Anti-aliasing
+    if (config.rayJitter !== undefined) u.rayJitter.value = config.rayJitter;
+    if (config.stepJitter !== undefined) u.stepJitter.value = config.stepJitter;
+    if (config.frameIndex !== undefined) u.frameIndex.value = config.frameIndex;
+
+    // Star uniforms
     if (config.starsEnabled !== undefined) u.starsEnabled.value = config.starsEnabled ? 1.0 : 0.0;
     if (config.starDensity !== undefined) u.starDensity.value = config.starDensity;
+    if (config.starSize !== undefined) u.starSize.value = config.starSize;
+    if (config.starBrightness !== undefined) u.starBrightness.value = config.starBrightness;
+
+    // Nebula uniforms
     if (config.nebulaEnabled !== undefined) u.nebulaEnabled.value = config.nebulaEnabled ? 1.0 : 0.0;
     if (config.nebulaBrightness !== undefined) u.nebulaBrightness.value = config.nebulaBrightness;
+    if (config.nebulaScale !== undefined) u.nebulaScale.value = config.nebulaScale;
+    if (config.nebulaDetailScale !== undefined) u.nebulaDetailScale.value = config.nebulaDetailScale;
+    if (config.nebulaSpeed !== undefined) u.nebulaSpeed.value = config.nebulaSpeed;
+    if (config.nebulaDensity !== undefined) u.nebulaDensity.value = config.nebulaDensity;
+    if (config.nebulaOffsetX !== undefined) u.nebulaOffset.value.x = config.nebulaOffsetX;
+    if (config.nebulaOffsetY !== undefined) u.nebulaOffset.value.y = config.nebulaOffsetY;
+    if (config.nebulaOffsetZ !== undefined) u.nebulaOffset.value.z = config.nebulaOffsetZ;
 
     // Color uniforms
     if (config.diskInnerColor !== undefined) {
@@ -651,6 +832,12 @@ export class BlackHoleSimulation {
     }
     if (config.diskOuterColor !== undefined) {
       u.diskOuterColor.value.set(config.diskOuterColor);
+    }
+    if (config.nebulaColor1 !== undefined) {
+      u.nebulaColor1.value.set(config.nebulaColor1);
+    }
+    if (config.nebulaColor2 !== undefined) {
+      u.nebulaColor2.value.set(config.nebulaColor2);
     }
   }
 
@@ -665,7 +852,9 @@ export class BlackHoleSimulation {
       raySteps: preset.raySteps,
       stepSize: preset.stepSize,
       starsEnabled: preset.starsEnabled,
-      nebulaEnabled: preset.nebulaEnabled
+      nebulaEnabled: preset.nebulaEnabled,
+      rayJitter: preset.rayJitter,
+      stepJitter: preset.stepJitter
     });
   }
 
