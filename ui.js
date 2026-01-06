@@ -138,15 +138,6 @@ export class BlackHoleUI {
       expanded: false
     });
 
-    advancedFolder.addBinding(this.config, 'raySteps', {
-      min: 64,
-      max: 512,
-      step: 32,
-      label: 'Ray Steps'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('raySteps', this.config.raySteps);
-    });
-
     advancedFolder.addBinding(this.config, 'stepSize', {
       min: 0.1,
       max: 1,
@@ -181,11 +172,9 @@ export class BlackHoleUI {
     if (!preset) return;
 
     // Update config
-    this.config.raySteps = preset.raySteps;
     this.config.stepSize = preset.stepSize;
     this.config.starsEnabled = preset.starsEnabled;
     this.config.nebulaEnabled = preset.nebulaEnabled;
-    this.config.rayJitter = preset.rayJitter ?? 1.0;
     this.config.stepJitter = preset.stepJitter ?? 0.25;
 
     // Apply to simulation
@@ -285,15 +274,6 @@ export class BlackHoleUI {
       this.callbacks.onUniformChange('diskTemperature', this.config.diskTemperature);
     });
 
-    appearanceFolder.addBinding(this.config, 'diskRotationSpeed', {
-      min: -2.0,
-      max: 2.0,
-      step: 0.01,
-      label: 'Rotation Speed'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('diskRotationSpeed', this.config.diskRotationSpeed);
-    });
-
     // === Ring Pattern ===
     const ringFolder = diskFolder.addFolder({
       title: 'Ring Pattern',
@@ -307,9 +287,9 @@ export class BlackHoleUI {
     });
 
     ringFolder.addBinding(this.config, 'ringScale', {
-      min: 0.5,
-      max: 10.0,
-      step: 0.1,
+      min: 0.1,
+      max: 1.0,
+      step: 0.01,
       label: 'Scale'
     }).on('change', () => {
       this.callbacks.onUniformChange('ringScale', this.config.ringScale);
@@ -342,7 +322,22 @@ export class BlackHoleUI {
       this.callbacks.onUniformChange('ringSharpness', this.config.ringSharpness);
     });
 
-    ringFolder.addBinding(this.config, 'ringTwist', {
+    // === Rotational Dynamics ===
+    const rotationFolder = diskFolder.addFolder({
+      title: 'Rotational Dynamics',
+      expanded: true
+    });
+
+    rotationFolder.addBinding(this.config, 'diskRotationSpeed', {
+      min: -2.0,
+      max: 2.0,
+      step: 0.01,
+      label: 'Rotation Speed'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('diskRotationSpeed', this.config.diskRotationSpeed);
+    });
+
+    rotationFolder.addBinding(this.config, 'ringTwist', {
       min: 0.0,
       max: 10.0,
       step: 0.1,
@@ -351,22 +346,22 @@ export class BlackHoleUI {
       this.callbacks.onUniformChange('ringTwist', this.config.ringTwist);
     });
 
-    ringFolder.addBinding(this.config, 'diskDifferentialRotation', {
-      min: 0.0,
-      max: 1.0,
-      step: 0.05,
-      label: 'Differential'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('diskDifferentialRotation', this.config.diskDifferentialRotation);
-    });
-
-    ringFolder.addBinding(this.config, 'noiseEvolutionSpeed', {
+    rotationFolder.addBinding(this.config, 'noiseAnimFrequency', {
       min: 0.0,
       max: 5.0,
       step: 0.1,
-      label: 'Evolution Speed'
+      label: 'Anim Frequency'
     }).on('change', () => {
-      this.callbacks.onUniformChange('noiseEvolutionSpeed', this.config.noiseEvolutionSpeed);
+      this.callbacks.onUniformChange('noiseAnimFrequency', this.config.noiseAnimFrequency);
+    });
+
+    rotationFolder.addBinding(this.config, 'noiseAnimAmplitude', {
+      min: 0.0,
+      max: 2.0,
+      step: 0.1,
+      label: 'Anim Amplitude'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('noiseAnimAmplitude', this.config.noiseAnimAmplitude);
     });
 
     // === Edge Falloff Controls ===

@@ -18,6 +18,33 @@ import { BlackHoleUI } from './ui.js';
 
 const STORAGE_KEY = 'blackhole-simulation-config';
 
+// List of color property keys that need normalization
+const COLOR_PROPERTIES = [
+  'diskInnerColor',
+  'diskOuterColor',
+  'starBackgroundColor',
+  'nebulaColor1',
+  'nebulaColor2'
+];
+
+/**
+ * Convert a color value to hex string.
+ * Handles Tweakpane's color object format {r, g, b} or hex strings.
+ */
+function normalizeColorToHex(value) {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value && typeof value === 'object') {
+    // Tweakpane color object format {r, g, b} with values 0-255
+    const r = Math.round(value.r ?? 0);
+    const g = Math.round(value.g ?? 0);
+    const b = Math.round(value.b ?? 0);
+    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+  }
+  return '#000000';
+}
+
 /**
  * Load configuration from localStorage, merging with defaults.
  */
@@ -26,21 +53,35 @@ function loadConfig(defaults) {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
+      // Normalize any color properties that may have been saved as objects
+      for (const key of COLOR_PROPERTIES) {
+        if (parsed[key] !== undefined) {
+          parsed[key] = normalizeColorToHex(parsed[key]);
+        }
+      }
       // Merge saved values with defaults (defaults provide any missing keys)
       return { ...defaults, ...parsed };
     }
   } catch (e) {
     console.warn('Failed to load config from localStorage:', e);
   }
-  return defaults;
+  return { ...defaults };
 }
 
 /**
  * Save current configuration to localStorage.
+ * Normalizes color values to hex strings before saving.
  */
 function saveConfig(config) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    // Create a copy and normalize colors to hex strings
+    const normalizedConfig = { ...config };
+    for (const key of COLOR_PROPERTIES) {
+      if (normalizedConfig[key] !== undefined) {
+        normalizedConfig[key] = normalizeColorToHex(normalizedConfig[key]);
+      }
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedConfig));
     console.log('Configuration saved to localStorage');
   } catch (e) {
     console.warn('Failed to save config to localStorage:', e);
@@ -85,8 +126,8 @@ const defaultConfig = {
   ringBrightness: 0.3,
   ringSharpness: 1.0,
   ringTwist: 0.5,
-  diskDifferentialRotation: 0.8,
-  noiseEvolutionSpeed: 1.0,
+  noiseAnimFrequency: 1.0,
+  noiseAnimAmplitude: 0.5,
 
   // Disk edge falloff
   diskEdgeSoftnessInner: 0.15,
@@ -106,7 +147,6 @@ const defaultConfig = {
 
   // Performance
   qualityPreset: 'medium',
-  raySteps: 100,
   stepSize: 0.3,
   adaptiveMinStep: 0.15,
   stepJitter: 0.25,
@@ -206,6 +246,7 @@ blackHoleSimulation.createBlackHole();
 
 const ui = new BlackHoleUI(config, {
   // Handle individual uniform changes
+  // Note: Tweakpane already updates config via binding, we just sync to shader uniforms
   onUniformChange: (key, value) => {
     blackHoleSimulation.updateUniforms({ [key]: value });
   },
@@ -218,6 +259,7 @@ const ui = new BlackHoleUI(config, {
   },
 
   // Handle quality preset changes
+  // Note: UI's applyQualityPreset already updates config before calling this
   onQualityPreset: (presetName) => {
     blackHoleSimulation.applyQualityPreset(presetName);
   },
