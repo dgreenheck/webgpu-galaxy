@@ -86,6 +86,7 @@ const defaultConfig = {
   ringSharpness: 1.0,
   ringTwist: 0.5,
   diskDifferentialRotation: 0.8,
+  noiseEvolutionSpeed: 1.0,
 
   // Disk edge falloff
   diskEdgeSoftnessInner: 0.15,
@@ -112,6 +113,7 @@ const defaultConfig = {
 
   // Stars
   starsEnabled: true,
+  starBackgroundColor: '#000000',
   starDensity: 0.003,
   starSize: 2.0,
   starBrightness: 1.0,
@@ -121,13 +123,11 @@ const defaultConfig = {
   nebulaBrightness: 0.15,
   nebulaColor1: '#1a0033',
   nebulaColor2: '#4d1a26',
-  nebulaScale: 2.0,
-  nebulaDetailScale: 2.0,
+  nebulaScale1: 2.0,
+  nebulaScale2: 6.0,
+  nebulaBlend: 0.3,
   nebulaSpeed: 0.01,
-  nebulaDensity: 2.0,
-  nebulaOffsetX: 0.0,
-  nebulaOffsetY: 0.0,
-  nebulaOffsetZ: 0.0,
+  nebulaDensity: 0.5,
 
   // Bloom post-processing
   bloomStrength: 0.8,
@@ -157,6 +157,7 @@ camera.lookAt(0, 0, 0);
 const renderer = new THREE.WebGPURenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
 document.body.appendChild(renderer.domElement);
 
 // ============================================================================
@@ -166,6 +167,7 @@ document.body.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.05;
+controls.rotateSpeed = -0.5;
 controls.minDistance = 5;
 controls.maxDistance = 50;
 controls.target.set(0, 0, 0);

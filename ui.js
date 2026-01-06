@@ -203,7 +203,7 @@ export class BlackHoleUI {
     const bhFolder = this.pane.addFolder({ title: 'Black Hole' });
 
     bhFolder.addBinding(this.config, 'blackHoleMass', {
-      min: 0.5,
+      min: 0.1,
       max: 3.0,
       step: 0.1,
       label: 'Mass'
@@ -245,7 +245,7 @@ export class BlackHoleUI {
 
     geometryFolder.addBinding(this.config, 'diskInnerThickness', {
       min: 0.05,
-      max: 1.0,
+      max: 5.0,
       step: 0.05,
       label: 'Inner Thickness'
     }).on('change', () => {
@@ -286,9 +286,9 @@ export class BlackHoleUI {
     });
 
     appearanceFolder.addBinding(this.config, 'diskRotationSpeed', {
-      min: 0.0,
-      max: 5.0,
-      step: 0.05,
+      min: -2.0,
+      max: 2.0,
+      step: 0.01,
       label: 'Rotation Speed'
     }).on('change', () => {
       this.callbacks.onUniformChange('diskRotationSpeed', this.config.diskRotationSpeed);
@@ -344,7 +344,7 @@ export class BlackHoleUI {
 
     ringFolder.addBinding(this.config, 'ringTwist', {
       min: 0.0,
-      max: 5.0,
+      max: 10.0,
       step: 0.1,
       label: 'Twist'
     }).on('change', () => {
@@ -358,6 +358,15 @@ export class BlackHoleUI {
       label: 'Differential'
     }).on('change', () => {
       this.callbacks.onUniformChange('diskDifferentialRotation', this.config.diskDifferentialRotation);
+    });
+
+    ringFolder.addBinding(this.config, 'noiseEvolutionSpeed', {
+      min: 0.0,
+      max: 5.0,
+      step: 0.1,
+      label: 'Evolution Speed'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('noiseEvolutionSpeed', this.config.noiseEvolutionSpeed);
     });
 
     // === Edge Falloff Controls ===
@@ -474,9 +483,15 @@ export class BlackHoleUI {
       this.callbacks.onUniformChange('starsEnabled', this.config.starsEnabled);
     });
 
+    starsFolder.addBinding(this.config, 'starBackgroundColor', {
+      label: 'Background'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('starBackgroundColor', this.config.starBackgroundColor);
+    });
+
     starsFolder.addBinding(this.config, 'starDensity', {
       min: 0.001,
-      max: 0.02,
+      max: 0.1,
       step: 0.001,
       label: 'Density'
     }).on('change', () => {
@@ -521,37 +536,19 @@ export class BlackHoleUI {
     nebulaFolder.addBinding(this.config, 'nebulaBrightness', {
       min: 0.0,
       max: 1.0,
-      step: 0.05,
+      step: 0.01,
       label: 'Brightness'
     }).on('change', () => {
       this.callbacks.onUniformChange('nebulaBrightness', this.config.nebulaBrightness);
     });
 
     nebulaFolder.addBinding(this.config, 'nebulaDensity', {
-      min: 0.5,
-      max: 5.0,
-      step: 0.1,
+      min: -1.0,
+      max: 1.0,
+      step: 0.05,
       label: 'Density'
     }).on('change', () => {
       this.callbacks.onUniformChange('nebulaDensity', this.config.nebulaDensity);
-    });
-
-    nebulaFolder.addBinding(this.config, 'nebulaScale', {
-      min: 0.5,
-      max: 10.0,
-      step: 0.5,
-      label: 'Scale'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('nebulaScale', this.config.nebulaScale);
-    });
-
-    nebulaFolder.addBinding(this.config, 'nebulaDetailScale', {
-      min: 0.5,
-      max: 5.0,
-      step: 0.1,
-      label: 'Detail Scale'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('nebulaDetailScale', this.config.nebulaDetailScale);
     });
 
     nebulaFolder.addBinding(this.config, 'nebulaSpeed', {
@@ -561,6 +558,39 @@ export class BlackHoleUI {
       label: 'Animation Speed'
     }).on('change', () => {
       this.callbacks.onUniformChange('nebulaSpeed', this.config.nebulaSpeed);
+    });
+
+    // Layers subfolder
+    const layersFolder = nebulaFolder.addFolder({
+      title: 'Layers',
+      expanded: false
+    });
+
+    layersFolder.addBinding(this.config, 'nebulaScale1', {
+      min: 0.5,
+      max: 10.0,
+      step: 0.5,
+      label: 'Layer 1 Scale'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebulaScale1', this.config.nebulaScale1);
+    });
+
+    layersFolder.addBinding(this.config, 'nebulaScale2', {
+      min: 0.5,
+      max: 20.0,
+      step: 0.5,
+      label: 'Layer 2 Scale'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebulaScale2', this.config.nebulaScale2);
+    });
+
+    layersFolder.addBinding(this.config, 'nebulaBlend', {
+      min: 0.0,
+      max: 1.0,
+      step: 0.05,
+      label: 'Layer 2 Blend'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('nebulaBlend', this.config.nebulaBlend);
     });
 
     // Colors subfolder
@@ -579,39 +609,6 @@ export class BlackHoleUI {
       label: 'Color 2'
     }).on('change', () => {
       this.callbacks.onUniformChange('nebulaColor2', this.config.nebulaColor2);
-    });
-
-    // Offset subfolder for positioning
-    const offsetFolder = nebulaFolder.addFolder({
-      title: 'Position Offset',
-      expanded: false
-    });
-
-    offsetFolder.addBinding(this.config, 'nebulaOffsetX', {
-      min: -10.0,
-      max: 10.0,
-      step: 0.5,
-      label: 'X'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('nebulaOffsetX', this.config.nebulaOffsetX);
-    });
-
-    offsetFolder.addBinding(this.config, 'nebulaOffsetY', {
-      min: -10.0,
-      max: 10.0,
-      step: 0.5,
-      label: 'Y'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('nebulaOffsetY', this.config.nebulaOffsetY);
-    });
-
-    offsetFolder.addBinding(this.config, 'nebulaOffsetZ', {
-      min: -10.0,
-      max: 10.0,
-      step: 0.5,
-      label: 'Z'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('nebulaOffsetZ', this.config.nebulaOffsetZ);
     });
   }
 

@@ -136,6 +136,7 @@ export class BlackHoleSimulation {
       ringSharpness: uniform(config.ringSharpness ?? 1.0),
       ringTwist: uniform(config.ringTwist ?? 0.5),
       diskDifferentialRotation: uniform(config.diskDifferentialRotation ?? 0.8),
+      noiseEvolutionSpeed: uniform(config.noiseEvolutionSpeed ?? 1.0),
 
       // === Disk Edge Falloff ===
       diskEdgeSoftnessInner: uniform(config.diskEdgeSoftnessInner ?? 0.15),
@@ -165,6 +166,7 @@ export class BlackHoleSimulation {
 
       // === Stars ===
       starsEnabled: uniform(config.starsEnabled ? 1.0 : 0.0),
+      starBackgroundColor: uniform(new THREE.Color(config.starBackgroundColor ?? '#000000')),
       starDensity: uniform(config.starDensity ?? 0.003),
       starSize: uniform(config.starSize ?? 2.0),
       starBrightness: uniform(config.starBrightness ?? 1.0),
@@ -174,15 +176,11 @@ export class BlackHoleSimulation {
       nebulaBrightness: uniform(config.nebulaBrightness ?? 0.15),
       nebulaColor1: uniform(new THREE.Color(config.nebulaColor1 ?? '#1a0033')),
       nebulaColor2: uniform(new THREE.Color(config.nebulaColor2 ?? '#4d1a26')),
-      nebulaScale: uniform(config.nebulaScale ?? 2.0),
-      nebulaDetailScale: uniform(config.nebulaDetailScale ?? 2.0),
+      nebulaScale1: uniform(config.nebulaScale1 ?? 2.0),
+      nebulaScale2: uniform(config.nebulaScale2 ?? 6.0),
+      nebulaBlend: uniform(config.nebulaBlend ?? 0.3),
       nebulaSpeed: uniform(config.nebulaSpeed ?? 0.01),
-      nebulaDensity: uniform(config.nebulaDensity ?? 2.0),
-      nebulaOffset: uniform(new THREE.Vector3(
-        config.nebulaOffsetX ?? 0.0,
-        config.nebulaOffsetY ?? 0.0,
-        config.nebulaOffsetZ ?? 0.0
-      )),
+      nebulaDensity: uniform(config.nebulaDensity ?? 0.5),
 
       // === Animation State ===
       time: uniform(0),
@@ -415,25 +413,26 @@ export class BlackHoleSimulation {
 
     /**
      * Generate procedural nebula clouds.
-     * Uses layered 3D noise for volumetric appearance.
+     * Uses two noise layers at different frequencies for depth.
+     * Noise amplitude is -1 to 1, density offsets to control visibility.
      */
     const nebulaField = Fn(([rayDir, time]) => {
-      // Apply offset and scale to create varied nebula positions
-      const noisePos = rayDir.mul(uniforms.nebulaScale).add(uniforms.nebulaOffset);
+      // Layer 1: Large scale structures
+      const noisePos1 = rayDir.mul(uniforms.nebulaScale1);
+      const n1 = fbm(noisePos1.add(time.mul(uniforms.nebulaSpeed))).mul(2.0).sub(1.0); // Remap to [-1, 1]
 
-      // Multiple noise layers for depth
-      const n1 = fbm(noisePos.add(time.mul(uniforms.nebulaSpeed)));
-      const n2 = fbm(noisePos.mul(uniforms.nebulaDetailScale).sub(time.mul(uniforms.nebulaSpeed.mul(0.5))));
+      // Layer 2: Higher frequency detail
+      const noisePos2 = rayDir.mul(uniforms.nebulaScale2);
+      const n2 = fbm(noisePos2.sub(time.mul(uniforms.nebulaSpeed.mul(0.5)))).mul(2.0).sub(1.0); // Remap to [-1, 1]
 
-      // Combine noise layers
-      const nebula = n1.mul(n2).mul(uniforms.nebulaDensity);
+      // Combine layers - blend controls mix, density offsets for visibility threshold
+      const layer1Weight = float(1.0).sub(uniforms.nebulaBlend);
+      const combined = n1.mul(layer1Weight).add(n2.mul(uniforms.nebulaBlend)).add(uniforms.nebulaDensity);
+      const nebula = clamp(combined, float(0.0), float(1.0));
 
-      // Color gradient using user-defined colors
-      const nebulaColor = mix(
-        uniforms.nebulaColor1,
-        uniforms.nebulaColor2,
-        n1
-      ).add(vec3(0.05, 0.05, 0.1).mul(n2));
+      // Color gradient based on first noise layer
+      const colorMix = n1.mul(0.5).add(0.5); // Remap to [0, 1] for color mixing
+      const nebulaColor = mix(uniforms.nebulaColor1, uniforms.nebulaColor2, colorMix);
 
       return nebulaColor.mul(nebula).mul(uniforms.nebulaBrightness);
     });
@@ -486,8 +485,28 @@ export class BlackHoleSimulation {
         const noiseX = hitR.mul(cos(sampleAngle));
         const noiseY = hitR.mul(sin(sampleAngle));
 
-        // Sample 2D FBM noise
-        const noiseCoord = vec3(noiseX, noiseY, float(0.0)).mul(uniforms.ringScale);
+        // === DIFFERENTIAL ROTATION via Z-axis evolution ===
+        // Inner disk moves through 3D noise faster than outer disk
+        // This creates visual appearance of differential rotation
+        // without pattern winding (steady-state solution)
+        //
+        // Physical motivation: Keplerian orbits have omega ~ r^(-3/2)
+        // We use sqrt (alpha=0.5) for subtle visual effect
+        const referenceRadius = uniforms.diskInnerRadius.add(uniforms.diskOuterRadius).mul(0.5);
+        const clampedR = hitR.max(uniforms.diskInnerRadius.mul(0.5));
+        const differentialFactor = pow(referenceRadius.div(clampedR), float(0.5));
+
+        // Z coordinate: moves faster at inner radii
+        // When diskDifferentialRotation = 0: z = 0, pure 2D noise (original behavior)
+        // When diskDifferentialRotation > 0: differential z-evolution
+        // noiseEvolutionSpeed controls how fast the noise pattern evolves in time
+        const zCoord = time.mul(uniforms.diskRotationSpeed)
+          .mul(uniforms.diskDifferentialRotation)
+          .mul(uniforms.noiseEvolutionSpeed)
+          .mul(differentialFactor);
+
+        // Sample 3D FBM noise
+        const noiseCoord = vec3(noiseX, noiseY, zCoord).mul(uniforms.ringScale);
         const ringNoise = fbm(noiseCoord);
 
         // Apply contrast, brightness, and sharpness
@@ -715,7 +734,7 @@ export class BlackHoleSimulation {
 
       // === BACKGROUND (for escaped rays) ===
       If(escaped.greaterThan(0.5).and(alpha.lessThan(0.99)), () => {
-        const bgColor = vec3(0.0, 0.0, 0.0).toVar('bgColor');
+        const bgColor = uniforms.starBackgroundColor.toVar('bgColor');
 
         // Add stars if enabled
         If(uniforms.starsEnabled.greaterThan(0.5), () => {
@@ -786,6 +805,7 @@ export class BlackHoleSimulation {
     if (config.ringBrightness !== undefined) u.ringBrightness.value = config.ringBrightness;
     if (config.ringSharpness !== undefined) u.ringSharpness.value = config.ringSharpness;
     if (config.ringTwist !== undefined) u.ringTwist.value = config.ringTwist;
+    if (config.noiseEvolutionSpeed !== undefined) u.noiseEvolutionSpeed.value = config.noiseEvolutionSpeed;
 
     // Disk edge falloff
     if (config.diskEdgeSoftnessInner !== undefined) u.diskEdgeSoftnessInner.value = config.diskEdgeSoftnessInner;
@@ -811,6 +831,7 @@ export class BlackHoleSimulation {
 
     // Star uniforms
     if (config.starsEnabled !== undefined) u.starsEnabled.value = config.starsEnabled ? 1.0 : 0.0;
+    if (config.starBackgroundColor !== undefined) u.starBackgroundColor.value.set(config.starBackgroundColor);
     if (config.starDensity !== undefined) u.starDensity.value = config.starDensity;
     if (config.starSize !== undefined) u.starSize.value = config.starSize;
     if (config.starBrightness !== undefined) u.starBrightness.value = config.starBrightness;
@@ -818,13 +839,11 @@ export class BlackHoleSimulation {
     // Nebula uniforms
     if (config.nebulaEnabled !== undefined) u.nebulaEnabled.value = config.nebulaEnabled ? 1.0 : 0.0;
     if (config.nebulaBrightness !== undefined) u.nebulaBrightness.value = config.nebulaBrightness;
-    if (config.nebulaScale !== undefined) u.nebulaScale.value = config.nebulaScale;
-    if (config.nebulaDetailScale !== undefined) u.nebulaDetailScale.value = config.nebulaDetailScale;
+    if (config.nebulaScale1 !== undefined) u.nebulaScale1.value = config.nebulaScale1;
+    if (config.nebulaScale2 !== undefined) u.nebulaScale2.value = config.nebulaScale2;
+    if (config.nebulaBlend !== undefined) u.nebulaBlend.value = config.nebulaBlend;
     if (config.nebulaSpeed !== undefined) u.nebulaSpeed.value = config.nebulaSpeed;
     if (config.nebulaDensity !== undefined) u.nebulaDensity.value = config.nebulaDensity;
-    if (config.nebulaOffsetX !== undefined) u.nebulaOffset.value.x = config.nebulaOffsetX;
-    if (config.nebulaOffsetY !== undefined) u.nebulaOffset.value.y = config.nebulaOffsetY;
-    if (config.nebulaOffsetZ !== undefined) u.nebulaOffset.value.z = config.nebulaOffsetZ;
 
     // Color uniforms
     if (config.diskInnerColor !== undefined) {
