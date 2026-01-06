@@ -329,6 +329,12 @@ export function createBlackHoleShader(uniforms) {
         Break();
       });
 
+      // === TERMINATION: ESCAPED TO INFINITY ===
+      If(r.greaterThan(100.0), () => {
+        escaped.assign(1.0);
+        Break();
+      });
+
       // === ADAPTIVE STEP SIZE ===
       // Factor 1: Distance from event horizon
       const distFromHorizon = r.sub(rs);
@@ -433,6 +439,11 @@ export function createBlackHoleShader(uniforms) {
         color.addAssign(contribution.mul(remainingAlpha));
         alpha.addAssign(remainingAlpha.mul(sampleDensity.mul(uniforms.diskOpacityFalloff)));
       });
+    });
+
+    // After loop: if ray wasn't captured, it escaped
+    If(captured.lessThan(0.5), () => {
+      escaped.assign(1.0);
     });
 
     // === BACKGROUND (for escaped rays) ===
